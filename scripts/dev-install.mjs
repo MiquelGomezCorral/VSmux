@@ -18,10 +18,15 @@ const repoRoot = dirname(scriptDir);
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
 const skipBuild = args.includes("--skip-build");
+const skipT3 = args.includes("--skip-t3");
 const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
 const extensionId = `${packageJson.publisher}.${packageJson.name}`.toLowerCase();
 const extensionDirectoryName = `${extensionId}-${packageJson.version}`;
-const packageEntries = ["package.json", "README.md:readme.md", ...(packageJson.files ?? [])];
+const packageEntries = ["package.json", "README.md:readme.md", ...(packageJson.files ?? [])].filter(
+  (entry) =>
+    !skipT3 ||
+    (!entry.startsWith("out/t3code-embed/") && !entry.startsWith("out/t3code-server/")),
+);
 
 function fail(message) {
   console.error(message);
@@ -231,7 +236,11 @@ function writeDevInstallMarker(installRoot) {
 }
 
 if (!skipBuild) {
-  run(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["run", "build:extension"]);
+  run(process.platform === "win32" ? "pnpm.cmd" : "pnpm", [
+    "run",
+    "build:extension",
+    ...(skipT3 ? ["--", "--skip-t3"] : []),
+  ]);
 }
 
 const installRoot = resolveInstallRoot();

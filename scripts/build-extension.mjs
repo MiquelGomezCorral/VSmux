@@ -12,10 +12,14 @@ async function main() {
   ];
 
   if (!buildMode.minimal) {
+    if (!buildMode.skipT3) {
+      preWorkspaceTasks.push(
+        buildMode.rollback
+          ? () => runNodeScript("scripts/build-t3-embed.rollback.mjs")
+          : () => runNodeScript("scripts/build-t3-embed.mjs"),
+      );
+    }
     preWorkspaceTasks.push(
-      buildMode.rollback
-        ? () => runNodeScript("scripts/build-t3-embed.rollback.mjs")
-        : () => runNodeScript("scripts/build-t3-embed.mjs"),
       () => runNodeScript("scripts/vp.mjs", ["build", "--config", "vite.debug-panel.config.ts"]),
       () => runNodeScript("scripts/build-chat-history-webview.mjs"),
     );
@@ -72,6 +76,7 @@ function parseBuildMode(args) {
     minimal: args.includes("--minimal"),
     rollback: args.includes("--rollback"),
     serial: args.includes("--serial"),
+    skipT3: args.includes("--skip-t3"),
   };
 }
 

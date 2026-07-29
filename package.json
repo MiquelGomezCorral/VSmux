@@ -58,6 +58,7 @@
     "storybook:build": "node ./scripts/vp.mjs exec storybook build",
     "storybook:test": "node ./scripts/storybook-test.mjs",
     "workspace:reconnect:harness": "node ./scripts/workspace-reconnect-harness.mjs",
+    "test:real-extension": "node ./scripts/real-extension-smoke.mjs",
     "compile": "pnpm run build:extension",
     "watch": "tsc -w -p ./tsconfig.extension.json",
     "typecheck:all": "sh -c 'pnpm exec tsc -p ./tsconfig.extension.json --noEmit --pretty false; s1=$?; pnpm exec tsc -p ./chat-history/tsconfig.json --noEmit --pretty false; s2=$?; pnpm exec tsc -p ./tsconfig.frontend.json --noEmit --pretty false; s3=$?; if [ \"$s1\" -ne 0 ] || [ \"$s2\" -ne 0 ] || [ \"$s3\" -ne 0 ]; then exit 1; fi'",
