@@ -8,6 +8,10 @@ export type TerminalCreateOrAttachResult = {
   snapshot: TerminalSessionSnapshot;
 };
 
+export type TerminalCreateOrAttachOptions = {
+  cwd?: string;
+};
+
 export type TerminalWorkspaceBackendTitleChange = {
   sessionId: string;
   title?: string;
@@ -33,7 +37,10 @@ export type TerminalWorkspaceBackend = vscode.Disposable & {
   hasLiveTerminal: (sessionId: string) => boolean;
   initialize: (sessionRecords: readonly SessionRecord[]) => Promise<void>;
   acknowledgeAttention: (sessionId: string) => Promise<boolean>;
-  createOrAttachSession: (sessionRecord: SessionRecord) => Promise<TerminalCreateOrAttachResult>;
+  createOrAttachSession: (
+    sessionRecord: SessionRecord,
+    options?: TerminalCreateOrAttachOptions,
+  ) => Promise<TerminalCreateOrAttachResult>;
   applyFirstPromptAutoRename: (sessionId: string, title: string) => Promise<void>;
   focusSession: (sessionId: string) => Promise<boolean>;
   getSessionSnapshot: (sessionId: string) => TerminalSessionSnapshot | undefined;

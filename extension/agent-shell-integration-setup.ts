@@ -3,6 +3,7 @@ import * as path from "node:path";
 import {
   getAgentWrapperCmdContent,
   getAgentWrapperShellScriptContent,
+  getBashRcShimContent,
   getClaudeHookSettingsContent,
   getClaudeNotifyCommandContent,
   getOpenCodePluginContent,
@@ -13,6 +14,7 @@ import {
 } from "./agent-shell-integration-content";
 
 export type AgentShellIntegration = {
+  bashRcPath: string;
   binDir: string;
   claudeSettingsPath: string;
   debugLogPath: string;
@@ -34,6 +36,8 @@ export async function createAgentShellIntegration(
 ): Promise<AgentShellIntegration> {
   const integrationRoot = path.join(daemonStateDir, AGENT_SHELL_DIR_NAME);
   const binDir = path.join(integrationRoot, "bin");
+  const bashDir = path.join(integrationRoot, "bash");
+  const bashRcPath = path.join(bashDir, "vsmux-bashrc");
   const debugLogPath = path.join(integrationRoot, "agent-shell-debug.log");
   const hooksDir = path.join(integrationRoot, "hooks");
   const claudeConfigDir = path.join(hooksDir, "claude");
@@ -54,6 +58,7 @@ export async function createAgentShellIntegration(
   const zshDotDir = path.join(integrationRoot, "zsh");
 
   await mkdir(binDir, { recursive: true });
+  await mkdir(bashDir, { recursive: true });
   await mkdir(hooksDir, { recursive: true });
   await mkdir(claudeConfigDir, { recursive: true });
   await mkdir(opencodePluginDir, { recursive: true });
@@ -105,6 +110,7 @@ export async function createAgentShellIntegration(
     getOpenCodePluginContent(notifyPath, process.execPath),
     0o644,
   );
+  await writeFileIfChanged(bashRcPath, getBashRcShimContent(binDir), 0o644);
   await writeFileIfChanged(powerShellBootstrapPath, getPowerShellBootstrapContent(), 0o644);
   await writeFileIfChanged(path.join(zshDotDir, ".zshenv"), getZshEnvShimContent(), 0o644);
   await writeFileIfChanged(
@@ -125,6 +131,7 @@ export async function createAgentShellIntegration(
   );
 
   return {
+    bashRcPath,
     binDir,
     claudeSettingsPath,
     debugLogPath,

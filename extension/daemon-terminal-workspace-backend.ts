@@ -19,13 +19,17 @@ import {
 } from "./daemon-terminal-runtime";
 import type {
   TerminalWorkspaceBackendActivityChange,
+  TerminalCreateOrAttachOptions,
   TerminalCreateOrAttachResult,
   TerminalWorkspaceBackend,
   TerminalWorkspaceBackendPresentationChange,
   TerminalWorkspaceBackendTitleChange,
 } from "./terminal-workspace-backend";
 import {
+  deletePersistedShellStateFile,
   deletePersistedSessionStateFile,
+  getPersistedShellStateFilePath,
+  mergePersistedShellState,
   readPersistedSessionStateSnapshotFromFile,
   updatePersistedSessionStateFile,
   type PersistedSessionState,
@@ -296,6 +300,7 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
 
   public async createOrAttachSession(
     sessionRecord: SessionRecord,
+    options?: TerminalCreateOrAttachOptions,
   ): Promise<TerminalCreateOrAttachResult> {
     if (!isTerminalSession(sessionRecord)) {
       return {
@@ -319,9 +324,10 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
       };
     }
 
+    const cwd = options?.cwd ?? getDefaultWorkspaceCwd();
     const createOrAttachResult: TerminalCreateOrAttachResponse = await this.runtime.createOrAttach({
       cols: 120,
-      cwd: getDefaultWorkspaceCwd(),
+      cwd,
       rows: 34,
       sessionId: sessionRecord.sessionId,
       sessionStateFilePath: this.getSessionAgentStateFilePath(sessionRecord.sessionId),
@@ -476,9 +482,7 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
   }
 
   public async readPersistedSessionState(sessionId: string): Promise<PersistedSessionState> {
-    return (
-      await readPersistedSessionStateSnapshotFromFile(this.getSessionAgentStateFilePath(sessionId))
-    ).state;
+    return (await this.readPersistedSessionStateSnapshot(sessionId)).state;
   }
 
   public async restartSession(sessionRecord: SessionRecord): Promise<TerminalSessionSnapshot> {
@@ -490,6 +494,7 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
     }
 
     await this.killSession(sessionRecord.sessionId);
+    await deletePersistedShellStateFile(this.getSessionAgentStateFilePath(sessionRecord.sessionId));
     return (await this.createOrAttachSession(sessionRecord)).snapshot;
   }
 
@@ -801,6 +806,18 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
     );
   }
 
+  private async readPersistedSessionStateSnapshot(sessionId: string) {
+    const sessionStateFilePath = this.getSessionAgentStateFilePath(sessionId);
+    const [sessionState, shellState] = await Promise.all([
+      readPersistedSessionStateSnapshotFromFile(sessionStateFilePath),
+      readPersistedSessionStateSnapshotFromFile(getPersistedShellStateFilePath(sessionStateFilePath)),
+    ]);
+    return {
+      ...sessionState,
+      state: mergePersistedShellState(sessionState.state, shellState.state),
+    };
+  }
+
   private async clearFrozenSessionState(sessionId: string): Promise<void> {
     await updatePersistedSessionStateFile(
       this.getSessionAgentStateFilePath(sessionId),
@@ -861,16 +878,12 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
     workspaceId: string,
   ): Promise<TerminalSessionSnapshot> {
     const snapshot = createDisconnectedSessionSnapshot(sessionId, workspaceId);
-    const persistedState = (
-      await readPersistedSessionStateSnapshotFromFile(this.getSessionAgentStateFilePath(sessionId))
-    ).state;
+    const persistedState = (await this.readPersistedSessionStateSnapshot(sessionId)).state;
     return applyPersistedSessionStateToDisconnectedSnapshot(snapshot, persistedState);
   }
 
   private async refreshPersistedSessionActivity(sessionId: string): Promise<boolean> {
-    const persistedState = await readPersistedSessionStateSnapshotFromFile(
-      this.getSessionAgentStateFilePath(sessionId),
-    );
+    const persistedState = await this.readPersistedSessionStateSnapshot(sessionId);
     const nextActivityAtMs = getPersistedSessionActivityAtMs(persistedState.state);
     const previousActivityAtMs = this.lastTerminalActivityAtBySessionId.get(sessionId);
 
@@ -948,8 +961,10 @@ export function applyPersistedSessionStateToDisconnectedSnapshot(
     ...snapshot,
     agentName: persistedState.agentName,
     agentStatus: persistedState.agentStatus,
+    cwd: persistedState.cwd ?? snapshot.cwd,
     endedAt: persistedState.frozenAt,
     history,
+    isShellPromptIdle: persistedState.isShellPromptIdle,
     title: persistedState.title,
   };
 }
@@ -1013,6 +1028,7 @@ function haveSameTerminalSessionSnapshot(
     left.exitCode === right.exitCode &&
     (left.frontendAttachmentGeneration ?? 0) === (right.frontendAttachmentGeneration ?? 0) &&
     left.isAttached === right.isAttached &&
+    left.isShellPromptIdle === right.isShellPromptIdle &&
     left.restoreState === right.restoreState &&
     left.rows === right.rows &&
     left.sessionId === right.sessionId &&
@@ -1074,23 +1090,27 @@ function getManagedTerminalShellArgs(
   shellPath: string,
   agentShellIntegration: AgentShellIntegration | undefined,
 ): string[] | undefined {
-  if (process.platform !== "win32" || !agentShellIntegration?.powerShellBootstrapPath) {
-    return undefined;
+  if (
+    process.platform === "win32" &&
+    agentShellIntegration?.powerShellBootstrapPath &&
+    isWindowsPowerShellShell(shellPath)
+  ) {
+    return [
+      "-NoLogo",
+      "-NoExit",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      agentShellIntegration.powerShellBootstrapPath,
+    ];
   }
 
-  if (!isWindowsPowerShellShell(shellPath)) {
-    return undefined;
+  if (agentShellIntegration?.bashRcPath && isBashShell(shellPath)) {
+    return ["--rcfile", agentShellIntegration.bashRcPath, "-i"];
   }
 
-  return [
-    "-NoLogo",
-    "-NoExit",
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    agentShellIntegration.powerShellBootstrapPath,
-  ];
+  return undefined;
 }
 
 function isWindowsPowerShellShell(shellPath: string): boolean {
@@ -1105,6 +1125,11 @@ function isWindowsPowerShellShell(shellPath: string): boolean {
     shellName === "pwsh.exe" ||
     shellName === "pwsh"
   );
+}
+
+function isBashShell(shellPath: string): boolean {
+  const shellName = path.basename(shellPath).toLowerCase();
+  return shellName === "bash" || shellName === "bash.exe";
 }
 
 function getPersistedSessionActivityAtMs(state: PersistedSessionState): number | undefined {

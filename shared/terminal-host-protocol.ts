@@ -1,12 +1,12 @@
 import type { TerminalEngine } from "./session-grid-contract";
 
 /**
- * CDXC:Daemon-lifecycle 2026-04-25-09:25
+ * CDXC:Daemon-lifecycle 2026-07-29-21:45
  * Bump this whenever terminal-daemon-process behavior changes. The daemon is
  * intentionally reused across extension reloads when the protocol matches, so
  * behavior-only daemon fixes need a version change to replace old processes.
  */
-export const TERMINAL_HOST_PROTOCOL_VERSION = 29;
+export const TERMINAL_HOST_PROTOCOL_VERSION = 31;
 
 export type TerminalSessionStatus = "starting" | "running" | "exited" | "error" | "disconnected";
 
@@ -22,6 +22,7 @@ export type TerminalSessionSnapshot = {
   exitCode?: number;
   frontendAttachmentGeneration?: number;
   history?: string;
+  isShellPromptIdle?: boolean;
   isAttached: boolean;
   restoreState: TerminalSessionRestoreState;
   rows: number;
@@ -78,6 +79,7 @@ export type TerminalHostResizeRequest = {
 
 export type TerminalHostKillRequest = {
   type: "kill";
+  requestId: string;
   workspaceId: string;
   sessionId: string;
 };

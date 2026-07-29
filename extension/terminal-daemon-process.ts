@@ -19,8 +19,11 @@ import {
   serializeTerminalReplayHistory,
 } from "./terminal-daemon-replay";
 import {
+  getPersistedShellStateFilePath,
   readPersistedSessionStateFromFile,
+  readPersistedSessionStateSnapshotFromFile,
   updatePersistedSessionStateFile,
+  type PersistedSessionStateSnapshot,
 } from "./session-state-file";
 import { isGenericAgentSessionTitle } from "./first-prompt-session-title";
 import {
@@ -101,6 +104,7 @@ type ManagedSession = {
   historyBuffer: TerminalDaemonRingBuffer;
   liveTitle?: string;
   lastKnownPersistedTitle?: string;
+  lastShellInputAtMs?: number;
   pendingAttachQueues: PendingAttachQueue[];
   serializeAddon?: SerializeAddon;
   terminalEngine: TerminalEngine;
@@ -112,6 +116,7 @@ type ManagedSession = {
   sessionId: string;
   sessionKey: string;
   sessionStateFilePath: string;
+  shellStateFilePath: string;
   shell: string;
   snapshot: TerminalSessionSnapshot;
   workspaceId: string;
@@ -432,6 +437,7 @@ async function handleWriteRequest(
     createTerminalDaemonSessionKey(request.workspaceId, request.sessionId),
   );
   if (session) {
+    markSessionShellPromptBusy(session);
     await updatePersistedSessionStateFile(session.sessionStateFilePath, (currentState) => ({
       ...currentState,
       lastActivityAt: new Date().toISOString(),
@@ -466,7 +472,7 @@ async function handleKillRequest(
     session.pty.kill();
     sessions.delete(sessionKey);
   }
-  socket.send(JSON.stringify(okResponse(undefined, undefined, request)));
+  socket.send(JSON.stringify(okResponse(request.requestId)));
 }
 
 async function handleAcknowledgeAttentionRequest(
@@ -533,6 +539,7 @@ async function createSession(request: TerminalHostCreateOrAttachRequest): Promis
     sessionId: request.sessionId,
     sessionKey,
     sessionStateFilePath: request.sessionStateFilePath,
+    shellStateFilePath: getPersistedShellStateFilePath(request.sessionStateFilePath),
     serializeAddon: xtermState?.serializeAddon,
     shell: request.shell,
     snapshot: {
@@ -656,7 +663,10 @@ async function buildSnapshot(
   session: ManagedSession,
   includeHistory: boolean,
 ): Promise<TerminalSessionSnapshot> {
-  const persistedState = await readPersistedSessionStateFromFile(session.sessionStateFilePath);
+  const [persistedState, shellState] = await Promise.all([
+    readPersistedSessionStateFromFile(session.sessionStateFilePath),
+    readPersistedSessionStateSnapshotFromFile(session.shellStateFilePath),
+  ]);
   session.lastKnownPersistedTitle = persistedState.title;
   const shouldPreferPersistedPresentation =
     shouldPreferPersistedSessionPresentation(persistedState);
@@ -668,9 +678,11 @@ async function buildSnapshot(
     agentStatus: shouldPreferPersistedPresentation
       ? persistedState.agentStatus
       : (session.titleActivity?.activity ?? persistedState.agentStatus),
+    cwd: shellState.state.cwd ?? session.snapshot.cwd,
     frontendAttachmentGeneration: session.frontendAttachmentGeneration,
     history: includeHistory ? serializeSessionHistory(session) : undefined,
     isAttached: sessionSocketsBySessionKey.get(session.sessionKey)?.readyState === WebSocket.OPEN,
+    isShellPromptIdle: resolveShellPromptIdle(session, shellState),
     title: shouldPreferPersistedPresentation
       ? (persistedState.title ?? session.snapshot.title)
       : resolvePresentedSessionTitle(persistedState, {
@@ -713,6 +725,7 @@ async function handleSessionSocketMessage(
 ): Promise<void> {
   if (!rawMessage.trimStart().startsWith("{")) {
     if (attachment.activated) {
+      markSessionShellPromptBusy(session);
       session.pty.write(rawMessage);
     }
     return;
@@ -734,6 +747,7 @@ async function handleSessionSocketMessage(
       | TerminalReadyMessage;
   } catch {
     if (attachment.activated) {
+      markSessionShellPromptBusy(session);
       session.pty.write(rawMessage);
     }
     return;
@@ -747,6 +761,7 @@ async function handleSessionSocketMessage(
     message.type !== "terminalReady"
   ) {
     if (attachment.activated) {
+      markSessionShellPromptBusy(session);
       session.pty.write(rawMessage);
     }
     return;
@@ -754,6 +769,7 @@ async function handleSessionSocketMessage(
 
   if (message.type === "input" || message.type === "terminalInput") {
     if (attachment.activated) {
+      markSessionShellPromptBusy(session);
       session.pty.write(message.data);
     }
     return;
@@ -781,6 +797,40 @@ async function handleSessionSocketMessage(
   attachment.initialCols = message.cols;
   attachment.initialRows = message.rows;
   await activatePendingSessionAttachment(session, sessionKey, socket, attachment);
+}
+
+/**
+ * CDXC:Terminal-close 2026-07-29-21:45
+ * A close may skip confirmation only while a supported shell reports an idle
+ * prompt. Mark that report stale before any input reaches the PTY.
+ */
+function markSessionShellPromptBusy(session: ManagedSession): void {
+  session.lastShellInputAtMs = Date.now();
+  if (session.snapshot.isShellPromptIdle !== true) {
+    return;
+  }
+
+  session.snapshot = {
+    ...session.snapshot,
+    isShellPromptIdle: false,
+  };
+  broadcastControlSessionState(session.snapshot);
+}
+
+function resolveShellPromptIdle(
+  session: ManagedSession,
+  shellState: PersistedSessionStateSnapshot,
+): boolean | undefined {
+  const lastShellInputAtMs = session.lastShellInputAtMs;
+  if (
+    lastShellInputAtMs !== undefined &&
+    (shellState.updatedAtMs === undefined || shellState.updatedAtMs <= lastShellInputAtMs)
+  ) {
+    return false;
+  }
+
+  session.lastShellInputAtMs = undefined;
+  return shellState.state.isShellPromptIdle;
 }
 
 function okResponse(

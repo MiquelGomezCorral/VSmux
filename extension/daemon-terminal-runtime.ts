@@ -400,11 +400,12 @@ export class DaemonTerminalRuntime implements vscode.Disposable {
   public async kill(workspaceId: string, sessionId: string): Promise<void> {
     await this.ensureReady();
     const request: TerminalHostKillRequest = {
+      requestId: this.nextRequestId(),
       sessionId,
       type: "kill",
       workspaceId,
     };
-    this.controlSocket?.send(JSON.stringify(request));
+    await this.sendRequest(request);
   }
 
   public async killExistingSession(workspaceId: string, sessionId: string): Promise<boolean> {
@@ -414,11 +415,12 @@ export class DaemonTerminalRuntime implements vscode.Disposable {
     }
 
     const request: TerminalHostKillRequest = {
+      requestId: this.nextRequestId(),
       sessionId,
       type: "kill",
       workspaceId,
     };
-    this.controlSocket?.send(JSON.stringify(request));
+    await this.sendRequest(request);
     return Boolean(daemonInfo);
   }
 

@@ -7,9 +7,16 @@ export type PersistedSessionState = {
   agentName?: string;
   agentStatus: TerminalAgentStatus;
   agentSessionId?: string;
+  /**
+   * CDXC:Terminal-cwd 2026-07-29-21:45
+   * Shell integrations report the live directory and prompt state. Consumers
+   * must use only this explicit report, never infer CWD from a process.
+   */
+  cwd?: string;
   frozenAt?: string;
   hasAutoTitleFromFirstPrompt?: boolean;
   historyBase64?: string;
+  isShellPromptIdle?: boolean;
   lastActivityAt?: string;
   pendingFirstPromptAutoRenamePrompt?: string;
   title?: string;
@@ -24,9 +31,11 @@ const DEFAULT_PERSISTED_SESSION_STATE: PersistedSessionState = {
   agentName: undefined,
   agentStatus: "idle",
   agentSessionId: undefined,
+  cwd: undefined,
   frozenAt: undefined,
   hasAutoTitleFromFirstPrompt: undefined,
   historyBase64: undefined,
+  isShellPromptIdle: undefined,
   lastActivityAt: undefined,
   pendingFirstPromptAutoRenamePrompt: undefined,
   title: undefined,
@@ -48,21 +57,27 @@ export function parsePersistedSessionState(rawState: string): PersistedSessionSt
   let agentName: string | undefined;
   let agentStatus: TerminalAgentStatus = "idle";
   let agentSessionId: string | undefined;
+  let cwd: string | undefined;
   let frozenAt: string | undefined;
   let hasAutoTitleFromFirstPrompt: boolean | undefined;
   let historyBase64: string | undefined;
+  let isShellPromptIdle: boolean | undefined;
   let lastActivityAt: string | undefined;
   let pendingFirstPromptAutoRenamePrompt: string | undefined;
   let title: string | undefined;
 
   for (const line of rawState.split(/\r?\n/)) {
     const [key, ...valueParts] = line.split("=");
-    const value = valueParts.join("=").trim();
+    const rawValue = valueParts.join("=");
+    const value = rawValue.trim();
     if (key === "agent") {
       agentName = value || undefined;
     }
     if (key === "agentSessionId") {
       agentSessionId = normalizePersistedSessionValue(value);
+    }
+    if (key === "cwd") {
+      cwd = normalizePersistedWorkingDirectory(rawValue);
     }
     if (key === "title") {
       title = getVisibleTerminalTitle(value);
@@ -85,15 +100,25 @@ export function parsePersistedSessionState(rawState: string): PersistedSessionSt
     if (key === "status" && (value === "idle" || value === "working" || value === "attention")) {
       agentStatus = value;
     }
+    if (key === "shellPromptIdle") {
+      isShellPromptIdle =
+        value === "1" || /^true$/i.test(value)
+          ? true
+          : value === "0" || /^false$/i.test(value)
+            ? false
+            : undefined;
+    }
   }
 
   return {
     agentName,
     agentStatus,
     agentSessionId,
+    ...(cwd ? { cwd } : {}),
     frozenAt,
     hasAutoTitleFromFirstPrompt,
     historyBase64,
+    ...(isShellPromptIdle === undefined ? {} : { isShellPromptIdle }),
     lastActivityAt,
     pendingFirstPromptAutoRenamePrompt,
     title,
@@ -105,9 +130,11 @@ export function serializePersistedSessionState(state: PersistedSessionState): st
     `status=${state.agentStatus}`,
     `agent=${normalizePersistedSessionValue(state.agentName) ?? ""}`,
     `agentSessionId=${normalizePersistedSessionValue(state.agentSessionId) ?? ""}`,
+    `cwd=${normalizePersistedWorkingDirectory(state.cwd) ?? ""}`,
     `frozenAt=${normalizePersistedTimestamp(state.frozenAt) ?? ""}`,
     `autoTitleFromFirstPrompt=${state.hasAutoTitleFromFirstPrompt ? "1" : ""}`,
     `historyBase64=${normalizePersistedHistoryBase64(state.historyBase64) ?? ""}`,
+    `shellPromptIdle=${state.isShellPromptIdle === undefined ? "" : state.isShellPromptIdle ? "1" : "0"}`,
     `lastActivityAt=${normalizePersistedTimestamp(state.lastActivityAt) ?? ""}`,
     `pendingFirstPromptAutoRenamePrompt=${normalizePersistedSessionValue(state.pendingFirstPromptAutoRenamePrompt) ?? ""}`,
     `title=${normalizePersistedSessionValue(getVisibleTerminalTitle(state.title)) ?? ""}`,
@@ -123,13 +150,44 @@ export function haveSamePersistedSessionState(
     left.agentName === right.agentName &&
     left.agentStatus === right.agentStatus &&
     left.agentSessionId === right.agentSessionId &&
+    left.cwd === right.cwd &&
     left.frozenAt === right.frozenAt &&
     left.hasAutoTitleFromFirstPrompt === right.hasAutoTitleFromFirstPrompt &&
     left.historyBase64 === right.historyBase64 &&
+    left.isShellPromptIdle === right.isShellPromptIdle &&
     left.lastActivityAt === right.lastActivityAt &&
     left.pendingFirstPromptAutoRenamePrompt === right.pendingFirstPromptAutoRenamePrompt &&
     left.title === right.title
   );
+}
+
+export function getPersistedShellStateFilePath(sessionStateFilePath: string): string {
+  return `${sessionStateFilePath}.shell`;
+}
+
+/**
+ * CDXC:Terminal-cwd 2026-07-29-23:07
+ * Restarted terminals retain their session metadata but must discard the prior
+ * shell's CWD and prompt state before a new shell is created.
+ */
+export async function deletePersistedShellStateFile(sessionStateFilePath: string): Promise<void> {
+  await rm(getPersistedShellStateFilePath(sessionStateFilePath), { force: true });
+}
+
+export function mergePersistedShellState(
+  sessionState: PersistedSessionState,
+  shellState: PersistedSessionState,
+): PersistedSessionState {
+  /**
+   * CDXC:Terminal-cwd 2026-07-29-22:14
+   * Shell state is isolated from agent-hook writes, so the sidecar is the only
+   * authority for live CWD and prompt-idle state.
+   */
+  return {
+    ...sessionState,
+    cwd: shellState.cwd,
+    isShellPromptIdle: shellState.isShellPromptIdle,
+  };
 }
 
 export async function readPersistedSessionStateFromFile(
@@ -218,13 +276,20 @@ export async function updatePersistedSessionStateFile(
 }
 
 export async function deletePersistedSessionStateFile(filePath: string): Promise<void> {
-  await rm(filePath, { force: true }).catch(() => undefined);
+  await Promise.all([
+    rm(filePath, { force: true }).catch(() => undefined),
+    deletePersistedShellStateFile(filePath).catch(() => undefined),
+  ]);
   await cleanupPersistedSessionHookDedupMarkers(filePath).catch(() => undefined);
 }
 
 function normalizePersistedSessionValue(value: string | undefined): string | undefined {
   const normalizedValue = value?.replace(/\s+/g, " ").trim();
   return normalizedValue && normalizedValue.length > 0 ? normalizedValue : undefined;
+}
+
+function normalizePersistedWorkingDirectory(value: string | undefined): string | undefined {
+  return value && !/[\r\n\0]/.test(value) ? value : undefined;
 }
 
 function normalizePersistedHistoryBase64(value: string | undefined): string | undefined {

@@ -117,6 +117,78 @@ export function getClaudeHookSettingsContent(
   )}\n`;
 }
 
+export function getBashRcShimContent(binDir: string): string {
+  const quotedBinDir = quoteShellLiteral(binDir);
+  const quotedClaudeWrapperPath = quoteShellLiteral(`${binDir}/claude`);
+
+  /**
+   * CDXC:Terminal-cwd 2026-07-29-21:45
+   * Bash prompt hooks record the live directory only after a prompt is ready.
+   * Input transport clears the idle state before user text reaches the PTY.
+   */
+  return `export CLAUDE_BIN=${quotedClaudeWrapperPath}
+
+if [ -f "$HOME/.bashrc" ]; then
+  . "$HOME/.bashrc"
+fi
+
+export PATH=${quotedBinDir}:$PATH
+export CLAUDE_BIN=${quotedClaudeWrapperPath}
+hash -r 2>/dev/null || true
+unalias claude 2>/dev/null || true
+unalias codex 2>/dev/null || true
+unalias gemini 2>/dev/null || true
+unalias opencode 2>/dev/null || true
+
+if [ -z "\${__VSMUX_BASH_HOOKS_INSTALLED:-}" ]; then
+  __VSMUX_BASH_HOOKS_INSTALLED=1
+
+  __vsmux_write_shell_state() {
+    local prompt_idle="$1"
+    local state_file="\${VSMUX_SHELL_STATE_FILE:-}"
+    local state_dir tmp_file line
+
+    [ -n "$state_file" ] || return 0
+    case "$PWD" in
+      *$'\r'*|*$'\n'*) return 0 ;;
+    esac
+    state_dir="\${state_file%/*}"
+    if [ "$state_dir" != "$state_file" ] && ! mkdir -p -- "$state_dir"; then
+      return 0
+    fi
+
+    tmp_file="$state_file.tmp.$$"
+    {
+      if [ -r "$state_file" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+          case "$line" in
+            cwd=*|shellPromptIdle=*) ;;
+            *) printf '%s\\n' "$line" ;;
+          esac
+        done < "$state_file"
+      fi
+      printf 'cwd=%s\\n' "$PWD"
+      printf 'shellPromptIdle=%s\\n' "$prompt_idle"
+    } > "$tmp_file" && mv -f -- "$tmp_file" "$state_file"
+  }
+
+  __vsmux_mark_prompt_idle() {
+    __vsmux_write_shell_state 1
+  }
+
+  __vsmux_mark_command_started() {
+    __vsmux_write_shell_state 0
+  }
+
+  case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in
+    "declare -a"*) PROMPT_COMMAND+=(__vsmux_mark_prompt_idle) ;;
+    *) PROMPT_COMMAND="\${PROMPT_COMMAND:+$PROMPT_COMMAND; }__vsmux_mark_prompt_idle" ;;
+  esac
+  PS0='$( __vsmux_mark_command_started )'"\${PS0-}"
+fi
+`;
+}
+
 export function getZshEnvShimContent(): string {
   return `if [ -f "$HOME/.zshenv" ]; then
   . "$HOME/.zshenv"
@@ -203,9 +275,6 @@ if [ -z "$__VSMUX_ZSH_HOOKS_INSTALLED" ]; then
     emulate -L zsh
     local state_file="\${VSMUX_SESSION_STATE_FILE:-}"
     local title="$1"
-    local session_status="idle"
-    local session_agent="\${VSMUX_AGENT:-}"
-    local session_last_activity=""
 
     [ -n "$state_file" ] || return 0
 
@@ -213,24 +282,45 @@ if [ -z "$__VSMUX_ZSH_HOOKS_INSTALLED" ]; then
     title=\${title//$'\\n'/ }
     title=\${title//$'\\t'/ }
 
-    if [ -r "$state_file" ]; then
-      local key value
-      while IFS='=' read -r key value; do
-        case "$key" in
-          status) session_status="$value" ;;
-          agent) session_agent="$value" ;;
-          lastActivityAt) session_last_activity="$value" ;;
-        esac
-      done < "$state_file"
-    fi
-
-    mkdir -p -- "\${state_file:h}" >/dev/null 2>&1 || true
+    mkdir -p -- "\${state_file:h}" || return 0
     local tmp_file="$state_file.tmp.$$"
     {
-      printf 'status=%s\\n' "$session_status"
-      printf 'agent=%s\\n' "$session_agent"
-      printf 'lastActivityAt=%s\\n' "$session_last_activity"
+      if [ -r "$state_file" ]; then
+        local line
+        while IFS= read -r line || [ -n "$line" ]; do
+          case "$line" in
+            title=*) ;;
+            *) printf '%s\\n' "$line" ;;
+          esac
+        done < "$state_file"
+      fi
       printf 'title=%s\\n' "$title"
+    } >| "$tmp_file" && mv -f -- "$tmp_file" "$state_file"
+  }
+
+  __vsmux_write_shell_state() {
+    emulate -L zsh
+    local state_file="\${VSMUX_SHELL_STATE_FILE:-}"
+    local prompt_idle="$1"
+
+    [ -n "$state_file" ] || return 0
+    case "$PWD" in
+      *$'\r'*|*$'\n'*) return 0 ;;
+    esac
+    mkdir -p -- "\${state_file:h}" || return 0
+    local tmp_file="$state_file.tmp.$$"
+    {
+      if [ -r "$state_file" ]; then
+        local line
+        while IFS= read -r line || [ -n "$line" ]; do
+          case "$line" in
+            cwd=*|shellPromptIdle=*) ;;
+            *) printf '%s\\n' "$line" ;;
+          esac
+        done < "$state_file"
+      fi
+      printf 'cwd=%s\\n' "$PWD"
+      printf 'shellPromptIdle=%s\\n' "$prompt_idle"
     } >| "$tmp_file" && mv -f -- "$tmp_file" "$state_file"
   }
 
@@ -244,8 +334,18 @@ if [ -z "$__VSMUX_ZSH_HOOKS_INSTALLED" ]; then
 
   autoload -Uz add-zsh-hook 2>/dev/null || true
   if typeset -f add-zsh-hook >/dev/null 2>&1; then
-    add-zsh-hook preexec __vsmux_restore_session_title
-    add-zsh-hook precmd __vsmux_restore_session_title
+    __vsmux_before_command() {
+      __vsmux_write_shell_state 0
+      __vsmux_restore_session_title
+    }
+
+    __vsmux_prompt_ready() {
+      __vsmux_write_shell_state 1
+      __vsmux_restore_session_title
+    }
+
+    add-zsh-hook preexec __vsmux_before_command
+    add-zsh-hook precmd __vsmux_prompt_ready
   fi
 fi
 
@@ -326,20 +426,6 @@ if (-not (Get-Variable -Name __VSMUX_POWERSHELL_INIT -Scope Global -ErrorAction 
     }
 
     $normalizedTitle = __vsmux_normalize_title $Title
-    $status = __vsmux_read_state_value "status"
-    if ([string]::IsNullOrWhiteSpace($status)) {
-      $status = "idle"
-    }
-
-    $agent = __vsmux_read_state_value "agent"
-    if ($null -eq $agent) {
-      $agent = ""
-    }
-
-    $lastActivityAt = __vsmux_read_state_value "lastActivityAt"
-    if ($null -eq $lastActivityAt) {
-      $lastActivityAt = ""
-    }
     $persistedTitle = ""
     if ($null -ne $normalizedTitle) {
       $persistedTitle = [string]$normalizedTitle
@@ -351,13 +437,51 @@ if (-not (Get-Variable -Name __VSMUX_POWERSHELL_INIT -Scope Global -ErrorAction 
     }
 
     $tmpFile = "$stateFile.tmp.$PID"
-    [System.IO.File]::WriteAllLines($tmpFile, @(
-      "status=$status"
-      "agent=$agent"
-      "lastActivityAt=$lastActivityAt"
-      "title=$persistedTitle"
-      ""
-    ))
+    $nextLines = [System.Collections.Generic.List[string]]::new()
+    if (Test-Path -LiteralPath $stateFile) {
+      foreach ($line in [System.IO.File]::ReadAllLines($stateFile)) {
+        if ($line.StartsWith("title=")) {
+          continue
+        }
+
+        $nextLines.Add($line)
+      }
+    }
+    $nextLines.Add("title=$persistedTitle")
+    [System.IO.File]::WriteAllLines($tmpFile, $nextLines)
+    Move-Item -LiteralPath $tmpFile -Destination $stateFile -Force
+  }
+
+  function global:__vsmux_write_shell_state([bool]$IsPromptIdle) {
+    $stateFile = $env:VSMUX_SHELL_STATE_FILE
+    if ([string]::IsNullOrWhiteSpace($stateFile)) {
+      return
+    }
+
+    $currentLocation = $executionContext.SessionState.Path.CurrentLocation.Path
+    if ($currentLocation.IndexOf([char]13) -ge 0 -or $currentLocation.IndexOf([char]10) -ge 0) {
+      return
+    }
+
+    $directory = [System.IO.Path]::GetDirectoryName($stateFile)
+    if (-not [string]::IsNullOrWhiteSpace($directory)) {
+      [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+    }
+
+    $tmpFile = "$stateFile.tmp.$PID"
+    $nextLines = [System.Collections.Generic.List[string]]::new()
+    if (Test-Path -LiteralPath $stateFile) {
+      foreach ($line in [System.IO.File]::ReadAllLines($stateFile)) {
+        if ($line.StartsWith("cwd=") -or $line.StartsWith("shellPromptIdle=")) {
+          continue
+        }
+
+        $nextLines.Add($line)
+      }
+    }
+    $nextLines.Add("cwd=$currentLocation")
+    $nextLines.Add("shellPromptIdle=$(if ($IsPromptIdle) { '1' } else { '0' })")
+    [System.IO.File]::WriteAllLines($tmpFile, $nextLines)
     Move-Item -LiteralPath $tmpFile -Destination $stateFile -Force
   }
 
@@ -432,6 +556,18 @@ if (-not (Get-Variable -Name __VSMUX_POWERSHELL_INIT -Scope Global -ErrorAction 
 
   Set-Alias -Name vam-title -Value vsmux_set_title -Scope Global
 
+  $global:__vsmux_prompt_idle_supported = $false
+  $readLineCommand = Get-Command -Name PSConsoleHostReadLine -CommandType Function -ErrorAction SilentlyContinue
+  if ($readLineCommand) {
+    $global:__vsmux_original_read_line = $readLineCommand.ScriptBlock
+    function global:PSConsoleHostReadLine {
+      $line = & $global:__vsmux_original_read_line
+      __vsmux_write_shell_state $false
+      return $line
+    }
+    $global:__vsmux_prompt_idle_supported = $true
+  }
+
   $global:__vsmux_original_prompt = if (Test-Path Function:\\prompt) {
     (Get-Item Function:\\prompt).ScriptBlock
   } else {
@@ -439,6 +575,9 @@ if (-not (Get-Variable -Name __VSMUX_POWERSHELL_INIT -Scope Global -ErrorAction 
   }
 
   function global:prompt {
+    if ($global:__vsmux_prompt_idle_supported) {
+      __vsmux_write_shell_state $true
+    }
     __vsmux_sync_current_title
     if ($global:__vsmux_original_prompt) {
       & $global:__vsmux_original_prompt

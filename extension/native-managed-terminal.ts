@@ -1,6 +1,7 @@
 import type * as vscode from "vscode";
 
 const SESSION_ID_ENV_KEY = "VSMUX_SESSION_ID";
+const SHELL_STATE_FILE_ENV_KEY = "VSMUX_SHELL_STATE_FILE";
 const SESSION_STATE_FILE_ENV_KEY = "VSMUX_SESSION_STATE_FILE";
 const WORKSPACE_ID_ENV_KEY = "VSMUX_WORKSPACE_ID";
 const WORKSPACE_ROOT_ENV_KEY = "VSMUX_WORKSPACE_ROOT";
@@ -19,6 +20,7 @@ export function createManagedTerminalEnvironment(
   const normalizedWorkspaceRoot = normalizeEnvironmentValue(workspaceRoot);
   return {
     [SESSION_ID_ENV_KEY]: sessionId,
+    [SHELL_STATE_FILE_ENV_KEY]: `${sessionStateFilePath}.shell`,
     [SESSION_STATE_FILE_ENV_KEY]: sessionStateFilePath,
     [WORKSPACE_ID_ENV_KEY]: workspaceId,
     ...(normalizedWorkspaceRoot ? { [WORKSPACE_ROOT_ENV_KEY]: normalizedWorkspaceRoot } : {}),

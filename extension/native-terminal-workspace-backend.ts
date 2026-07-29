@@ -21,6 +21,7 @@ import {
 import { readManagedTerminalIdentityFromProcessId } from "./native-terminal-process-identity";
 import type {
   TerminalWorkspaceBackendActivityChange,
+  TerminalCreateOrAttachOptions,
   TerminalCreateOrAttachResult,
   TerminalWorkspaceBackend,
   TerminalWorkspaceBackendPresentationChange,
@@ -52,6 +53,9 @@ import { createWorkspaceTrace } from "./runtime-trace";
 import { getDaemonDebuggingModeEnv } from "./daemon-debugging-mode";
 import { appendAgentTerminalTitlePipelineDebugLog } from "./agent-terminal-title-pipeline-debug-log";
 import {
+  deletePersistedShellStateFile,
+  getPersistedShellStateFilePath,
+  mergePersistedShellState,
   readPersistedSessionStateSnapshotFromFile,
   updatePersistedSessionStateFile,
   type PersistedSessionState,
@@ -97,6 +101,7 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
     new vscode.EventEmitter<TerminalWorkspaceBackendTitleChange>();
   private readonly disposables: vscode.Disposable[] = [];
   private readonly lastTerminalActivityAtBySessionId = new Map<string, number>();
+  private readonly lastShellInputAtBySessionId = new Map<string, number>();
   private lastActivatedEditorSessionId: string | undefined;
   private readonly observedEditorGroupIndexBySessionId = new Map<string, number>();
   private pollTimer: NodeJS.Timeout | undefined;
@@ -145,6 +150,7 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
         });
         this.terminalToSessionId.delete(terminal);
         this.projections.delete(sessionId);
+        this.lastShellInputAtBySessionId.delete(sessionId);
         this.observedEditorGroupIndexBySessionId.delete(sessionId);
         this.sessions.set(sessionId, {
           ...(this.sessions.get(sessionId) ??
@@ -189,6 +195,7 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
         }
 
         this.recordSessionActivity(sessionId, Date.now(), true);
+        this.markSessionShellPromptBusy(sessionId);
         this.logBackendDebug("backend.terminalShellExecution.started", {
           commandLine: event.execution.commandLine.value,
           sessionId,
@@ -301,6 +308,7 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
 
   public async createOrAttachSession(
     sessionRecord: SessionRecord,
+    options?: TerminalCreateOrAttachOptions,
   ): Promise<TerminalCreateOrAttachResult> {
     if (!isTerminalSession(sessionRecord)) {
       return {
@@ -316,7 +324,7 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
       sessionId: sessionRecord.sessionId,
       title: sessionRecord.title,
     });
-    const projection = await this.ensureTerminal(sessionRecord);
+    const projection = await this.ensureTerminal(sessionRecord, options?.cwd);
     await this.syncTerminalName(projection.terminal, sessionRecord.sessionId);
     await this.refreshSessionSnapshot(sessionRecord.sessionId);
     return {
@@ -746,6 +754,7 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
     }
 
     await this.killSession(sessionRecord.sessionId);
+    await deletePersistedShellStateFile(this.getSessionAgentStateFilePath(sessionRecord.sessionId));
     return (await this.createOrAttachSession(sessionRecord)).snapshot;
   }
 
@@ -755,6 +764,7 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
       return;
     }
 
+    this.markSessionShellPromptBusy(sessionId);
     if (shouldExecute && isWindowsPowerShellShell(getDefaultShell())) {
       projection.terminal.sendText(data, false);
       projection.terminal.sendText("\r", false);
@@ -780,9 +790,7 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
   }
 
   public async readPersistedSessionState(sessionId: string): Promise<PersistedSessionState> {
-    return (
-      await readPersistedSessionStateSnapshotFromFile(this.getSessionAgentStateFilePath(sessionId))
-    ).state;
+    return (await this.readPersistedTerminalState(sessionId)).state;
   }
 
   public syncSessions(sessionRecords: readonly SessionRecord[]): void {
@@ -801,6 +809,7 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
       }
 
       this.sessionRecordBySessionId.delete(sessionId);
+      this.lastShellInputAtBySessionId.delete(sessionId);
       this.observedEditorGroupIndexBySessionId.delete(sessionId);
       this.sessionTitleBySessionId.delete(sessionId);
     }
@@ -815,7 +824,10 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
     );
   }
 
-  private async ensureTerminal(sessionRecord: TerminalSessionRecord): Promise<SessionProjection> {
+  private async ensureTerminal(
+    sessionRecord: TerminalSessionRecord,
+    cwd = getDefaultWorkspaceCwd(),
+  ): Promise<SessionProjection> {
     const existingProjection = this.projections.get(sessionRecord.sessionId);
     if (existingProjection && vscode.window.terminals.includes(existingProjection.terminal)) {
       await this.logState("ENSURE", "projection-reused", {
@@ -852,7 +864,7 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
     }
 
     const terminal = vscode.window.createTerminal({
-      cwd: getDefaultWorkspaceCwd(),
+      cwd,
       env: this.createTerminalEnvironment(sessionRecord.sessionId),
       iconPath: new vscode.ThemeIcon("terminal"),
       location: {
@@ -1655,7 +1667,13 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
     titleChange?: TerminalWorkspaceBackendTitleChange;
   }> {
     const projection = this.projections.get(sessionId);
-    const persistedState = await this.readPersistedSessionState(sessionId);
+    const persistedSessionState = await this.readPersistedTerminalState(sessionId);
+    const persistedState = persistedSessionState.state;
+    const isShellPromptIdle = this.resolveShellPromptIdle(
+      sessionId,
+      persistedState.isShellPromptIdle,
+      persistedSessionState.shellStateUpdatedAtMs,
+    );
     const previousSnapshot = this.sessions.get(sessionId);
     const previousTitle = this.sessionTitleBySessionId.get(sessionId);
     let nextSnapshot: TerminalSessionSnapshot;
@@ -1666,7 +1684,9 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
           createDisconnectedSessionSnapshot(sessionId, this.options.workspaceId)),
         agentName: persistedState.agentName,
         agentStatus: persistedState.agentStatus,
+        cwd: persistedState.cwd ?? this.sessions.get(sessionId)?.cwd ?? getDefaultWorkspaceCwd(),
         isAttached: false,
+        isShellPromptIdle,
         restoreState: "live",
         status: projection?.terminal.exitStatus ? "exited" : "disconnected",
       };
@@ -1676,7 +1696,9 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
           createDisconnectedSessionSnapshot(sessionId, this.options.workspaceId)),
         agentName: persistedState.agentName,
         agentStatus: persistedState.agentStatus,
+        cwd: persistedState.cwd ?? this.sessions.get(sessionId)?.cwd ?? getDefaultWorkspaceCwd(),
         isAttached: this.hasAttachedTerminal(sessionId),
+        isShellPromptIdle,
         restoreState: "live",
         startedAt: this.sessions.get(sessionId)?.startedAt ?? new Date().toISOString(),
         status: "running",
@@ -1811,6 +1833,37 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
     }
   }
 
+  private markSessionShellPromptBusy(sessionId: string): void {
+    this.lastShellInputAtBySessionId.set(sessionId, Date.now());
+    const snapshot = this.sessions.get(sessionId);
+    if (!snapshot || snapshot.isShellPromptIdle !== true) {
+      return;
+    }
+
+    this.sessions.set(sessionId, {
+      ...snapshot,
+      isShellPromptIdle: false,
+    });
+    this.changeSessionsEmitter.fire();
+  }
+
+  private resolveShellPromptIdle(
+    sessionId: string,
+    isShellPromptIdle: boolean | undefined,
+    shellStateUpdatedAtMs: number | undefined,
+  ): boolean | undefined {
+    const lastShellInputAtMs = this.lastShellInputAtBySessionId.get(sessionId);
+    if (
+      lastShellInputAtMs !== undefined &&
+      (shellStateUpdatedAtMs === undefined || shellStateUpdatedAtMs <= lastShellInputAtMs)
+    ) {
+      return false;
+    }
+
+    this.lastShellInputAtBySessionId.delete(sessionId);
+    return isShellPromptIdle;
+  }
+
   private async persistSessionActivity(
     sessionId: string,
     activityAt: number,
@@ -1872,6 +1925,21 @@ export class NativeTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
 
   private getSessionAgentStateFilePath(sessionId: string): string {
     return path.join(this.getAgentStateDirectory(), `${sessionId}.env`);
+  }
+
+  private async readPersistedTerminalState(sessionId: string): Promise<{
+    shellStateUpdatedAtMs: number | undefined;
+    state: PersistedSessionState;
+  }> {
+    const sessionStateFilePath = this.getSessionAgentStateFilePath(sessionId);
+    const [sessionState, shellState] = await Promise.all([
+      readPersistedSessionStateSnapshotFromFile(sessionStateFilePath),
+      readPersistedSessionStateSnapshotFromFile(getPersistedShellStateFilePath(sessionStateFilePath)),
+    ]);
+    return {
+      shellStateUpdatedAtMs: shellState.updatedAtMs,
+      state: mergePersistedShellState(sessionState.state, shellState.state),
+    };
   }
 
   private getProcessAssociationStorageKey(): string {
@@ -1987,6 +2055,7 @@ function haveSameTerminalSessionSnapshot(
     left?.exitCode === right.exitCode &&
     (left?.frontendAttachmentGeneration ?? 0) === (right.frontendAttachmentGeneration ?? 0) &&
     left?.isAttached === right.isAttached &&
+    left?.isShellPromptIdle === right.isShellPromptIdle &&
     left?.restoreState === right.restoreState &&
     left?.rows === right.rows &&
     left?.sessionId === right.sessionId &&
@@ -2018,23 +2087,27 @@ function getManagedTerminalShellArgs(
   shellPath: string,
   agentShellIntegration: AgentShellIntegration | undefined,
 ): string[] | undefined {
-  if (process.platform !== "win32" || !agentShellIntegration?.powerShellBootstrapPath) {
-    return undefined;
+  if (
+    process.platform === "win32" &&
+    agentShellIntegration?.powerShellBootstrapPath &&
+    isWindowsPowerShellShell(shellPath)
+  ) {
+    return [
+      "-NoLogo",
+      "-NoExit",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      agentShellIntegration.powerShellBootstrapPath,
+    ];
   }
 
-  if (!isWindowsPowerShellShell(shellPath)) {
-    return undefined;
+  if (agentShellIntegration?.bashRcPath && isBashShell(shellPath)) {
+    return ["--rcfile", agentShellIntegration.bashRcPath, "-i"];
   }
 
-  return [
-    "-NoLogo",
-    "-NoExit",
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    agentShellIntegration.powerShellBootstrapPath,
-  ];
+  return undefined;
 }
 
 function isWindowsPowerShellShell(shellPath: string): boolean {
@@ -2049,6 +2122,11 @@ function isWindowsPowerShellShell(shellPath: string): boolean {
     shellName === "pwsh.exe" ||
     shellName === "pwsh"
   );
+}
+
+function isBashShell(shellPath: string): boolean {
+  const shellName = path.basename(shellPath).toLowerCase();
+  return shellName === "bash" || shellName === "bash.exe";
 }
 
 function getPersistedSessionActivityAtMs(state: { lastActivityAt?: string }): number | undefined {
