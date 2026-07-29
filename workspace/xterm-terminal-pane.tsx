@@ -614,11 +614,16 @@ export const XtermTerminalPane: React.FC<XtermTerminalPaneProps> = ({
       return true;
     };
 
+    /**
+     * CDXC:TerminalPaste 2026-07-29-21:35
+     * Clipboard input must pass through xterm so applications that enable
+     * bracketed paste receive one paste operation instead of typed lines.
+     */
     const pasteClipboardText = async () => {
       try {
         const text = await navigator.clipboard.readText();
         if (text) {
-          sendSocketMessage(createTerminalInputMessage(pane.sessionId, text));
+          terminal.paste(text);
         }
       } catch {
         // Clipboard access can fail outside a user gesture.
@@ -1444,7 +1449,7 @@ export const XtermTerminalPane: React.FC<XtermTerminalPaneProps> = ({
         return;
       }
 
-      sendSocketMessage(createTerminalInputMessage(pane.sessionId, text));
+      terminal.paste(text);
       event.preventDefault();
       event.stopImmediatePropagation();
     };
