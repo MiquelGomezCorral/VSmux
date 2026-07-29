@@ -15,6 +15,10 @@ describe("sidebar store", () => {
     resetSidebarStore();
   });
 
+  test("should show session close buttons by default", () => {
+    expect(createInitialSidebarStoreDataState().hud.showCloseButtonOnSessionCards).toBe(true);
+  });
+
   test("should track the latest order sync result for the matching sidebar section", () => {
     useSidebarStore.getState().applyOrderSyncResultMessage({
       itemIds: ["claude", "codex"],

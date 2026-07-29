@@ -9,6 +9,7 @@
   --app-card-active: #182233;
   --app-button-background: #2f6feb;
   --app-button-foreground: #f7fbff;
+  --app-danger: #ff7b72;
   --app-search-selection-border: color-mix(in srgb, #ffffff 92%, transparent);
   --app-search-selection-ring: color-mix(in srgb, #ffffff 56%, transparent);
   --app-input-background: #0f151d;

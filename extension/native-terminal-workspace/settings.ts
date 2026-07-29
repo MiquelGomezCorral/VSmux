@@ -279,7 +279,7 @@ export function getShowCloseButtonOnSessionCards(): boolean {
   return (
     vscode.workspace
       .getConfiguration(SETTINGS_SECTION)
-      .get<boolean>(SHOW_CLOSE_BUTTON_ON_SESSION_CARDS_SETTING, false) ?? false
+      .get<boolean>(SHOW_CLOSE_BUTTON_ON_SESSION_CARDS_SETTING, true) ?? true
   );
 }
 

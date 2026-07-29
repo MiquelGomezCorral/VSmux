@@ -95,7 +95,7 @@ export function createInitialSidebarStoreDataState(): SidebarStoreDataState {
       sectionVisibility: createDefaultSidebarSectionVisibility(),
       createSessionOnSidebarDoubleClick: false,
       renameSessionOnDoubleClick: false,
-      showCloseButtonOnSessionCards: false,
+      showCloseButtonOnSessionCards: true,
       showHotkeysOnSessionCards: false,
       showLastInteractionTimeOnSessionCards: false,
       theme: getInitialSidebarTheme(),

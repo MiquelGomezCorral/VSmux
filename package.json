@@ -637,8 +637,8 @@
         "VSmux.showCloseButtonOnSessionCards": {
           "title": "Show Close Button On Session Cards",
           "type": "boolean",
-          "default": false,
-          "description": "Reveal a close button when you hover a session card. You can always cmd + click or middle click on a card to close it."
+          "default": true,
+          "description": "Replace the trailing session-card timestamp with a close button on hover. You can always cmd + click or middle click on a card to close it."
         },
         "VSmux.showHotkeysOnSessionCards": {
           "title": "Show Hotkeys On Session Cards",

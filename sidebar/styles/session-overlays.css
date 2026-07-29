@@ -90,12 +90,12 @@
 }
 
 .session-context-menu-item-danger {
-  color: #ff7b72;
+  color: var(--app-danger);
 }
 
 .session-context-menu-item-danger:hover,
 .session-context-menu-item-danger:focus-visible {
-  background: color-mix(in srgb, #ff7b72 18%, transparent);
+  background: color-mix(in srgb, var(--app-danger) 18%, transparent);
 }
 
 .session-context-menu.sidebar-floating-menu {

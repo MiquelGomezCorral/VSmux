@@ -1,4 +1,4 @@
-import { IconLoader2, IconWorld } from "@tabler/icons-react";
+import { IconLoader2, IconWorld, IconX } from "@tabler/icons-react";
 import { Tooltip } from "@base-ui/react/tooltip";
 import {
   cloneElement,
@@ -43,10 +43,17 @@ export type SessionCardContentProps = {
   showLastInteractionTime?: boolean;
 };
 
+/**
+ * CDXC:SessionCards 2026-07-29-23:44
+ * Session cards reveal a full-size destructive close target on hover or focus.
+ * The preference can disable it, and the control replaces rather than crowds trailing status.
+ */
 export function SessionCardContent({
   aliasHeadingRef,
+  onClose,
   session,
   showDebugSessionNumbers,
+  showCloseButton,
   showLastInteractionTime = false,
 }: SessionCardContentProps) {
   const { headingText } = getSessionCardTitleTooltip({
@@ -84,7 +91,9 @@ export function SessionCardContent({
       : hasHeaderAgentIcon
         ? "icon"
         : "time";
-  const hasSessionHeadTrailing = Boolean(lastInteractionLabel) || hasHeaderAgentIcon;
+  const shouldShowCloseButton = showCloseButton && Boolean(onClose);
+  const hasSessionHeadTrailing =
+    Boolean(lastInteractionLabel) || hasHeaderAgentIcon || shouldShowCloseButton;
 
   return (
     <>
@@ -97,6 +106,7 @@ export function SessionCardContent({
             className="session-head-trailing"
             data-default-trailing-display={defaultTrailingDisplay}
             data-hover-trailing-display={hoverTrailingDisplay}
+            data-show-close-button={String(shouldShowCloseButton)}
           >
             {lastInteractionLabel ? (
               <div className="session-last-interaction-time" style={lastInteractionStyle}>
@@ -111,29 +121,25 @@ export function SessionCardContent({
                 isReloading={session.isReloading}
               />
             ) : null}
-          </div>
-        ) : null}
-        {/* <div className="session-head-actions">
-          <div className="session-meta" data-visible={String(showMeta)}>
-            {showHotkeys ? (
-              <span className="session-shortcut-label">{session.shortcutLabel}</span>
+            {shouldShowCloseButton ? (
+              <button
+                aria-label="Close session"
+                className="session-close-button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onClose?.();
+                }}
+                onMouseDown={(event) => {
+                  event.stopPropagation();
+                }}
+                type="button"
+              >
+                <IconX aria-hidden size={14} stroke={1.8} />
+              </button>
             ) : null}
           </div>
-          {showCloseButton && onClose ? (
-            <button
-              aria-label="Close session"
-              className="close-button"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onClose();
-              }}
-              type="button"
-            >
-              ×
-            </button>
-          ) : null}
-        </div> */}
+        ) : null}
       </div>
     </>
   );

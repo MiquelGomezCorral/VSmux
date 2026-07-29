@@ -15,6 +15,7 @@ const getWorkspacePaneCloseConfirmToastMessage = (sessionLabel?: string) => {
 };
 
 export type WorkspacePaneCloseButtonProps = {
+  closeImmediately?: boolean;
   onConfirmClose: () => void;
   onConfirmToastDismissed?: (toast: WorkspacePanelShowToastMessage) => void;
   onConfirmToastShown?: (toast: WorkspacePanelShowToastMessage) => void;
@@ -22,6 +23,7 @@ export type WorkspacePaneCloseButtonProps = {
 };
 
 export const WorkspacePaneCloseButton: React.FC<WorkspacePaneCloseButtonProps> = ({
+  closeImmediately = false,
   onConfirmClose,
   onConfirmToastDismissed,
   onConfirmToastShown,
@@ -93,6 +95,12 @@ export const WorkspacePaneCloseButton: React.FC<WorkspacePaneCloseButtonProps> =
           draggable={false}
           onClick={(event) => {
             event.stopPropagation();
+
+            if (closeImmediately) {
+              clearConfirmation();
+              onConfirmClose();
+              return;
+            }
 
             if (isConfirming) {
               clearConfirmation();

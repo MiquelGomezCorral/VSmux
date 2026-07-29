@@ -36,7 +36,7 @@ export function createSidebarHudState(
   snapshot: SessionGridSnapshot,
   theme: SidebarTheme = "dark-blue",
   agentManagerZoomPercent = DEFAULT_AGENT_MANAGER_ZOOM_PERCENT,
-  showCloseButtonOnSessionCards = false,
+  showCloseButtonOnSessionCards = true,
   showHotkeysOnSessionCards = false,
   showLastInteractionTimeOnSessionCards = false,
   debuggingMode = false,

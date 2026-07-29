@@ -2140,6 +2140,7 @@ const WorkspacePaneView: React.FC<WorkspacePaneViewProps> = ({
               onToggleSleeping={onToggleSleeping}
             />
             <WorkspacePaneCloseButton
+              closeImmediately={hasKnownIdleShellPrompt(pane)}
               onConfirmClose={onClose}
               onConfirmToastDismissed={onConfirmToastDismissed}
               onConfirmToastShown={onConfirmToastShown}
@@ -2205,6 +2206,30 @@ function supportsWorkspacePaneFork(pane: WorkspacePanelPane): boolean {
 
   const agentIcon = getSidebarAgentIconById(pane.snapshot?.agentName);
   return agentIcon === "codex" || agentIcon === "claude";
+}
+
+/**
+ * CDXC:Terminal-close 2026-07-29-21:45
+ * The pane X bypasses confirmation only for a live, explicitly reported Bash,
+ * Zsh, or PowerShell prompt. Unknown shells and active commands still confirm.
+ */
+function hasKnownIdleShellPrompt(pane: WorkspacePanelPane): boolean {
+  const snapshot = pane.kind === "terminal" ? pane.snapshot : undefined;
+  if (!snapshot || snapshot.isShellPromptIdle !== true) {
+    return false;
+  }
+
+  const shellName = snapshot.shell.split(/[\\/]/).pop()?.toLowerCase();
+  return (
+    shellName === "bash" ||
+    shellName === "bash.exe" ||
+    shellName === "zsh" ||
+    shellName === "zsh.exe" ||
+    shellName === "powershell" ||
+    shellName === "powershell.exe" ||
+    shellName === "pwsh" ||
+    shellName === "pwsh.exe"
+  );
 }
 
 function supportsWorkspacePaneFullReload(pane: WorkspacePanelPane): boolean {
