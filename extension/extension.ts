@@ -59,6 +59,7 @@ export function activate(context: vscode.ExtensionContext): void {
       workspace.moveSidebarToSecondarySidebar(),
     ),
     registerCommand("VSmux.createSession", () => workspace.createSession()),
+    registerCommand("VSmux.createSessionFromCurrentCwd", () => workspace.createSessionFromCurrentCwd()),
     registerCommand("VSmux.revealSession", () => workspace.revealSession()),
     registerCommand("VSmux.restartSession", () => workspace.restartSessionFromCommand()),
     registerCommand("VSmux.renameActiveSession", () => workspace.promptRenameFocusedSession()),

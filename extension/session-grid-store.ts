@@ -38,6 +38,7 @@ import {
   setViewModeInSimpleWorkspace,
   setVisibleCountInSimpleWorkspace,
   setGroupSleepingInSimpleWorkspace,
+  setGroupWorktreeInSimpleWorkspace,
   syncGroupOrderInSimpleWorkspace,
   syncSessionOrderInSimpleWorkspace,
   toggleFullscreenSessionInSimpleWorkspace,
@@ -176,6 +177,18 @@ export class SessionGridStore {
 
   public async renameGroup(groupId: string, title: string): Promise<boolean> {
     const result = renameGroupInSimpleWorkspace(this.snapshot, groupId, title);
+    this.snapshot = result.snapshot;
+    if (result.changed) {
+      await this.persist();
+    }
+    return result.changed;
+  }
+
+  public async setGroupWorktree(
+    groupId: string,
+    worktreePath: string | undefined,
+  ): Promise<boolean> {
+    const result = setGroupWorktreeInSimpleWorkspace(this.snapshot, groupId, worktreePath);
     this.snapshot = result.snapshot;
     if (result.changed) {
       await this.persist();

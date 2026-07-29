@@ -398,6 +398,27 @@ describe("WorkspacePanelManager", () => {
     manager.dispose();
   });
 
+  test("should forward new shell here messages from the workspace webview", async () => {
+    const onMessage = vi.fn();
+    const manager = new WorkspacePanelManager({
+      context: createMockContext(),
+      onMessage,
+    });
+
+    await manager.reveal();
+    createdPanels[0]?.webview.messageListeners[0]?.({
+      sessionId: "session-1",
+      type: "createSessionFromCurrentCwd",
+    });
+
+    expect(onMessage).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      type: "createSessionFromCurrentCwd",
+    });
+
+    manager.dispose();
+  });
+
   test("should forward acknowledge session attention messages from the workspace webview", async () => {
     const onMessage = vi.fn();
     const manager = new WorkspacePanelManager({

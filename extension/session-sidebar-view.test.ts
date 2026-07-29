@@ -130,6 +130,15 @@ describe("isSidebarMessage", () => {
       }),
     ).toBe(false);
   });
+
+  test("should accept selectGroupWorktree messages with a group id", () => {
+    expect(
+      isSidebarMessage({
+        groupId: "group-2",
+        type: "selectGroupWorktree",
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("shouldBypassSidebarMessageQueue", () => {

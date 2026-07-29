@@ -579,6 +579,7 @@ export function isSidebarMessage(candidate: unknown): candidate is SidebarToExte
       );
 
     case "createSessionInGroup":
+    case "selectGroupWorktree":
       return typeof message.groupId === "string" && message.groupId.length > 0;
 
     case "focusGroup":

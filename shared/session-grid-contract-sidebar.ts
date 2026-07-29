@@ -417,6 +417,10 @@ export type SidebarToExtensionMessage =
       sleeping: boolean;
     }
   | {
+      type: "selectGroupWorktree";
+      groupId: string;
+    }
+  | {
       type: "copyResumeCommand";
       sessionId: string;
     }

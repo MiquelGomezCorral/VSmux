@@ -256,6 +256,22 @@ export function renameGroupInSimpleWorkspace(
   };
 }
 
+export function setGroupWorktreeInSimpleWorkspace(
+  snapshot: GroupedSessionWorkspaceSnapshot,
+  groupId: string,
+  worktreePath: string | undefined,
+): WorkspaceMutationResult {
+  const normalizedWorktreePath = worktreePath?.trim() || undefined;
+  const nextSnapshot = updateGroup(snapshot, groupId, (group) => ({
+    ...group,
+    worktreePath: normalizedWorktreePath,
+  }));
+  return {
+    changed: !areSnapshotsEqual(snapshot, nextSnapshot),
+    snapshot: nextSnapshot,
+  };
+}
+
 export function removeGroupInSimpleWorkspace(
   snapshot: GroupedSessionWorkspaceSnapshot,
   groupId: string,
@@ -848,6 +864,7 @@ function normalizeGroup(group: SessionGroupRecord, index: number): SessionGroupR
     groupId: group.groupId?.trim() || `group-${index + 1}`,
     snapshot: normalizeGroupSnapshot(group.snapshot),
     title: group.title?.trim() || (index === 0 ? DEFAULT_MAIN_GROUP_TITLE : `Group ${index + 1}`),
+    ...(group.worktreePath?.trim() ? { worktreePath: group.worktreePath.trim() } : {}),
   };
 }
 
@@ -865,6 +882,7 @@ function prepareGroupForDisplayIdNormalization(
         .map((session) => normalizeSessionRecord(session)),
     },
     title: group.title?.trim() || (index === 0 ? DEFAULT_MAIN_GROUP_TITLE : `Group ${index + 1}`),
+    ...(group.worktreePath?.trim() ? { worktreePath: group.worktreePath.trim() } : {}),
   };
 }
 

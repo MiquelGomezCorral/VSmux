@@ -197,6 +197,11 @@ export type WorkspacePanelCreateSessionMessage = {
   type: "createSession";
 };
 
+export type WorkspacePanelCreateSessionFromCurrentCwdMessage = {
+  sessionId?: string;
+  type: "createSessionFromCurrentCwd";
+};
+
 export type WorkspacePanelAcknowledgeSessionAttentionReason =
   | "click"
   | "escape"
@@ -331,6 +336,7 @@ export type WorkspacePanelToExtensionMessage =
   | WorkspacePanelApplyCodexStatusLineMessage
   | WorkspacePanelDebugLogMessage
   | WorkspacePanelCreateSessionMessage
+  | WorkspacePanelCreateSessionFromCurrentCwdMessage
   | WorkspacePanelAcknowledgeSessionAttentionMessage
   | WorkspacePanelFocusSessionMessage
   | WorkspacePanelCloseSessionMessage

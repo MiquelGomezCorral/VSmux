@@ -634,6 +634,9 @@ function isWorkspaceMessage(candidate: unknown): candidate is WorkspacePanelToEx
   if (message.type === "createSession") {
     return true;
   }
+  if (message.type === "createSessionFromCurrentCwd") {
+    return typeof message.sessionId === "string" && message.sessionId.length > 0;
+  }
   if (message.type === "workspaceDebugLog") {
     return typeof message.event === "string" && message.event.length > 0;
   }

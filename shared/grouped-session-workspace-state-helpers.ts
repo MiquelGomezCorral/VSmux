@@ -145,6 +145,7 @@ export function normalizeGroup(group: SessionGroupRecord, index: number): Sessio
         : index === 0
           ? DEFAULT_MAIN_GROUP_TITLE
           : `Group ${index + 1}`,
+    ...(group.worktreePath?.trim() ? { worktreePath: group.worktreePath.trim() } : {}),
   };
 }
 

@@ -1,6 +1,7 @@
 import { Tooltip } from "@base-ui/react/tooltip";
 import {
   IconCaretRightFilled,
+  IconGitBranch,
   IconMessageCircle,
   IconMoon,
   IconPencil,
@@ -535,6 +536,14 @@ export function SessionGroupSection({
     });
   };
 
+  const requestSelectGroupWorktree = () => {
+    setContextMenuPosition(undefined);
+    vscode.postMessage({
+      groupId: group.groupId,
+      type: "selectGroupWorktree",
+    });
+  };
+
   const requestFullReloadGroup = () => {
     if (isBrowserGroup || !canFullReloadGroup) {
       return;
@@ -611,7 +620,7 @@ export function SessionGroupSection({
           event.preventDefault();
           event.stopPropagation();
           setContextMenuPosition(
-            clampContextMenuPosition(event.clientX, event.clientY, 3 + Number(canFullReloadGroup)),
+            clampContextMenuPosition(event.clientX, event.clientY, 4 + Number(canFullReloadGroup)),
           );
         }}
         ref={sortable.ref}
@@ -928,6 +937,15 @@ export function SessionGroupSection({
               >
                 <IconPencil aria-hidden="true" className="session-context-menu-icon" size={14} />
                 Rename
+              </button>
+              <button
+                className="session-context-menu-item"
+                onClick={requestSelectGroupWorktree}
+                role="menuitem"
+                type="button"
+              >
+                <IconGitBranch aria-hidden="true" className="session-context-menu-icon" size={14} />
+                Set worktree
               </button>
               {canFullReloadGroup ? (
                 <button

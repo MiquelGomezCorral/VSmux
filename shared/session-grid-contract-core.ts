@@ -141,6 +141,12 @@ export type SessionGroupRecord = {
   groupId: string;
   snapshot: SessionGridSnapshot;
   title: string;
+  /**
+   * CDXC:Group-worktree 2026-07-29-21:45
+   * New terminals in this group start here unless a creation action supplies
+   * a higher-priority directory.
+   */
+  worktreePath?: string;
 };
 
 export type GroupedSessionWorkspaceSnapshot = {

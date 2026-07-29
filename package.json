@@ -161,6 +161,11 @@
         "category": "VSmux"
       },
       {
+        "command": "VSmux.createSessionFromCurrentCwd",
+        "title": "New Shell Here",
+        "category": "VSmux"
+      },
+      {
         "command": "VSmux.revealSession",
         "title": "Reveal Session",
         "category": "VSmux"
@@ -1018,6 +1023,12 @@
         "command": "VSmux.createSession",
         "key": "ctrl+alt+n",
         "mac": "cmd+alt+n",
+        "when": "!inputFocus || terminalFocus || vsmux.workspacePanelFocus"
+      },
+      {
+        "command": "VSmux.createSessionFromCurrentCwd",
+        "key": "ctrl+alt+shift+n",
+        "mac": "cmd+alt+shift+n",
         "when": "!inputFocus || terminalFocus || vsmux.workspacePanelFocus"
       },
       {

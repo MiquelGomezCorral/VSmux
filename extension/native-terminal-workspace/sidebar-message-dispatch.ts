@@ -21,6 +21,7 @@ export type SidebarMessageHandlers = {
   fullReloadSession: (sessionId: string) => Promise<void>;
   openT3SessionBrowserAccessLink: (url: string) => Promise<void>;
   setGroupSleeping: (groupId: string, sleeping: boolean) => Promise<void>;
+  selectGroupWorktree: (groupId: string) => Promise<void>;
   setSessionFavorite: (sessionId: string, favorite: boolean) => Promise<void>;
   setSessionSleeping: (sessionId: string, sleeping: boolean) => Promise<void>;
   requestT3SessionBrowserAccess: (sessionId: string) => Promise<void>;
@@ -256,6 +257,9 @@ export async function dispatchSidebarMessage(
       return;
     case "setGroupSleeping":
       await handlers.setGroupSleeping(message.groupId, message.sleeping);
+      return;
+    case "selectGroupWorktree":
+      await handlers.selectGroupWorktree(message.groupId);
       return;
     case "copyResumeCommand":
       if (message.sessionId) {

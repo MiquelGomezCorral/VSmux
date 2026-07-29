@@ -1,4 +1,5 @@
 import { Tooltip } from "@base-ui/react/tooltip";
+import { IconTerminal2 } from "@tabler/icons-react";
 import {
   useEffect,
   useMemo,
@@ -33,6 +34,7 @@ import {
   shouldPreferTerminalTitleForAgentIcon,
 } from "../shared/sidebar-agents";
 import { WorkspacePaneCloseButton } from "./workspace-pane-close-button";
+import { WorkspacePaneActionTooltip } from "./workspace-pane-action-tooltip";
 import { WorkspacePaneFontSizeControls } from "./workspace-pane-font-size-controls";
 import { WorkspacePaneForkButton } from "./workspace-pane-fork-button";
 import { WorkspacePaneRenameButton } from "./workspace-pane-rename-button";
@@ -344,6 +346,13 @@ export const WorkspaceApp: React.FC<WorkspaceAppProps> = ({ messageSource = wind
   const requestCreateSession = () => {
     postToExtension({
       type: "createSession",
+    });
+  };
+
+  const requestCreateSessionFromCurrentCwd = (sessionId: string) => {
+    postToExtension({
+      sessionId,
+      type: "createSessionFromCurrentCwd",
     });
   };
 
@@ -1703,6 +1712,9 @@ export const WorkspaceApp: React.FC<WorkspaceAppProps> = ({ messageSource = wind
                 type: "closeSession",
               })
             }
+            onCreateSessionFromCurrentCwd={() =>
+              requestCreateSessionFromCurrentCwd(pane.sessionId)
+            }
             onConfirmToastDismissed={dismissWorkspaceToast}
             onConfirmToastShown={showWorkspaceToast}
             onRename={() =>
@@ -1917,6 +1929,7 @@ type WorkspacePaneViewProps = {
   onFocus: () => void;
   onTerminalPointerIntent?: () => void;
   onClose: () => void;
+  onCreateSessionFromCurrentCwd: () => void;
   onConfirmToastDismissed: (toast: WorkspacePanelShowToastMessage) => void;
   onConfirmToastShown: (toast: WorkspacePanelShowToastMessage) => void;
   onFork: () => void;
@@ -1953,6 +1966,7 @@ const WorkspacePaneView: React.FC<WorkspacePaneViewProps> = ({
   onFocus,
   onTerminalPointerIntent,
   onClose,
+  onCreateSessionFromCurrentCwd,
   onConfirmToastDismissed,
   onConfirmToastShown,
   onFork,
@@ -1979,6 +1993,7 @@ const WorkspacePaneView: React.FC<WorkspacePaneViewProps> = ({
   const headerIndicatorState = getWorkspacePaneHeaderIndicatorState(pane);
   const canFork = supportsWorkspacePaneFork(pane);
   const canReload = supportsWorkspacePaneFullReload(pane);
+  const canCreateSessionFromCurrentCwd = pane.kind === "terminal";
   const showPaneHeaderActions = pane.kind === "terminal" || pane.kind === "t3";
   const showPaneZoomControls = pane.kind === "terminal";
   const showPaneRenameButton = pane.kind === "terminal" || pane.kind === "t3";
@@ -2130,6 +2145,29 @@ const WorkspacePaneView: React.FC<WorkspacePaneViewProps> = ({
               <span aria-hidden="true" className="workspace-pane-action-divider" />
             ) : null}
             {showPaneRenameButton ? <WorkspacePaneRenameButton onRename={onRename} /> : null}
+            {canCreateSessionFromCurrentCwd ? (
+              <WorkspacePaneActionTooltip tooltip="New Shell Here">
+                <button
+                  aria-label="New shell here"
+                  className="workspace-pane-new-shell-button"
+                  draggable={false}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (event.detail === 0) {
+                      onCreateSessionFromCurrentCwd();
+                    }
+                  }}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onCreateSessionFromCurrentCwd();
+                  }}
+                  type="button"
+                >
+                  <IconTerminal2 aria-hidden size={14} stroke={1.8} />
+                </button>
+              </WorkspacePaneActionTooltip>
+            ) : null}
             {canFork ? <WorkspacePaneForkButton onFork={onFork} /> : null}
             {canReload ? <WorkspacePaneRefreshButton onRefresh={onReload} /> : null}
             {showPaneSleepDivider ? (

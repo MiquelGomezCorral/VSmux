@@ -706,6 +706,11 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
           return;
         }
 
+        if (message.type === "createSessionFromCurrentCwd") {
+          await this.createSessionFromCurrentCwd(message.sessionId);
+          return;
+        }
+
         if (message.type === "focusSession") {
           await this.focusSession(message.sessionId, "workspace");
           return;
@@ -1152,7 +1157,39 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     }
 
     await this.refreshSidebarFromCurrentState();
-    await this.createSurfaceIfNeeded(sessionRecord);
+    await this.afterStateChange({ sidebarAlreadyRefreshed: true });
+  }
+
+  public async createSessionFromCurrentCwd(sourceSessionId?: string): Promise<void> {
+    const sourceSession = sourceSessionId
+      ? this.store.getSession(sourceSessionId)
+      : this.store.getFocusedSession();
+    if (!sourceSession || !isTerminalSession(sourceSession)) {
+      void vscode.window.showErrorMessage("VSmux needs a focused terminal to create a shell here.");
+      return;
+    }
+
+    const sourceGroup = this.store.getSessionGroup(sourceSession.sessionId);
+    if (!sourceGroup) {
+      void vscode.window.showErrorMessage("VSmux could not find the focused terminal's group.");
+      return;
+    }
+
+    const cwd = (await this.backend.readPersistedSessionState(sourceSession.sessionId)).cwd?.trim();
+    if (!cwd) {
+      void vscode.window.showErrorMessage(
+        "VSmux has not received the current working directory for this terminal yet.",
+      );
+      return;
+    }
+
+    await this.store.focusGroup(sourceGroup.groupId);
+    const sessionRecord = await this.createTerminalSession({ cwd });
+    if (!sessionRecord) {
+      return;
+    }
+
+    await this.refreshSidebarFromCurrentState();
     await this.afterStateChange({ sidebarAlreadyRefreshed: true });
   }
 
@@ -2333,7 +2370,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     await this.persistSessionAgentLaunchState();
     await this.refreshSidebarFromCurrentState();
     const resolvedForkedSession = this.store.getSession(forkedSession.sessionId) ?? forkedSession;
-    await this.backend.createOrAttachSession(resolvedForkedSession);
     await this.afterStateChange({ sidebarAlreadyRefreshed: true });
     await this.backend.writeText(resolvedForkedSession.sessionId, forkCommand, true);
     this.scheduleForkRename(resolvedForkedSession.sessionId, sourceTitle);
@@ -2727,7 +2763,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     if (!command) {
       return;
     }
-    const commandCwd = worktreePath?.trim() || getDefaultWorkspaceCwd();
+    const commandCwd = worktreePath?.trim();
 
     if (!(await this.ensureShellSpawnAllowed())) {
       return;
@@ -2965,6 +3001,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     }
 
     const sessionRecord = await this.createTerminalSession({
+      cwd: input.cwd,
       title: createAgentSessionDefaultTitle(agentButton.name),
     });
     if (!sessionRecord) {
@@ -2978,17 +3015,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     });
     await this.persistSessionAgentLaunchState();
     await this.refreshSidebarFromCurrentState();
-    await this.backend.createOrAttachSession(sessionRecord);
     await this.afterStateChange({ sidebarAlreadyRefreshed: true });
-
-    const normalizedCwd = input.cwd?.trim();
-    if (normalizedCwd && normalizedCwd !== getDefaultWorkspaceCwd()) {
-      await this.backend.writeText(
-        sessionRecord.sessionId,
-        `cd ${quoteShellLiteral(normalizedCwd)}`,
-        true,
-      );
-    }
 
     const resumeCommand =
       input.source === "Claude"
@@ -3402,6 +3429,66 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     await this.createSession();
   }
 
+  public async selectGroupWorktree(groupId: string): Promise<void> {
+    const group = this.store.getGroup(groupId);
+    if (!group) {
+      return;
+    }
+
+    const workspaceRoot = getDefaultWorkspaceCwd();
+    const worktrees = await resolveSidebarProjectWorktrees(workspaceRoot);
+    const selected = await vscode.window.showQuickPick(
+      [
+        {
+          createWorktree: true,
+          description: "Use VS Code's Git worktree workflow",
+          label: "$(add) Create new worktree...",
+          worktreePath: undefined,
+        },
+        {
+          createWorktree: false,
+          description: workspaceRoot,
+          label: "Workspace root",
+          worktreePath: undefined,
+        },
+        ...worktrees.map((worktree) => ({
+          createWorktree: false,
+          description: worktree.branch,
+          detail: worktree.directory,
+          label: worktree.name,
+          worktreePath: worktree.directory,
+        })),
+      ],
+      {
+        placeHolder: `Choose the default directory for ${group.title}`,
+      },
+    );
+    if (!selected) {
+      return;
+    }
+
+    /**
+     * CDXC:Group-worktrees 2026-07-29-23:20
+     * New worktrees use VS Code's Git workflow so its branch naming, location,
+     * and other Git preferences remain authoritative. VSmux only assigns the result.
+     */
+    let worktreePath = selected.worktreePath;
+    if (selected.createWorktree) {
+      const previousPaths = new Set(worktrees.map((worktree) => worktree.directory));
+      await vscode.commands.executeCommand("git.createWorktree", vscode.Uri.file(workspaceRoot));
+      worktreePath = (await resolveSidebarProjectWorktrees(workspaceRoot)).find(
+        (worktree) => !previousPaths.has(worktree.directory),
+      )?.directory;
+      if (!worktreePath) {
+        return;
+      }
+    }
+
+    if (await this.store.setGroupWorktree(groupId, worktreePath)) {
+      await this.afterStateChange();
+    }
+  }
+
   public async closeGroup(groupId: string): Promise<void> {
     const group = this.store.getGroup(groupId);
     if (!group) {
@@ -3557,6 +3644,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       fullReloadSession: async (sessionId) => this.fullReloadSession(sessionId),
       openT3SessionBrowserAccessLink: async (url) => this.openT3SessionBrowserAccessLink(url),
       setGroupSleeping: async (groupId, sleeping) => this.setGroupSleeping(groupId, sleeping),
+      selectGroupWorktree: async (groupId) => this.selectGroupWorktree(groupId),
       setSessionFavorite: async (sessionId, favorite) =>
         this.setSessionFavorite(sessionId, favorite),
       setSessionSleeping: async (sessionId, sleeping) =>
@@ -4777,7 +4865,20 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
         return "existing-live-terminal";
       }
 
-      const createOrAttachResult = await this.backend.createOrAttachSession(sessionRecord);
+      /**
+       * CDXC:Terminal-cwd 2026-07-29-23:07
+       * Reattached sessions use their owning group's worktree, not whichever
+       * group happens to be active while reconciliation runs.
+       */
+      const cwd = await this.resolveTerminalCreationCwd(
+        this.store.getSessionGroup(sessionRecord.sessionId)?.worktreePath?.trim() ||
+          getDefaultWorkspaceCwd(),
+      );
+      if (!cwd) {
+        return "non-terminal";
+      }
+
+      const createOrAttachResult = await this.backend.createOrAttachSession(sessionRecord, { cwd });
       if (
         !createOrAttachResult.didCreateTerminal &&
         this.backend.hasLiveTerminal(sessionRecord.sessionId)
@@ -4982,10 +5083,21 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   }
 
   private async createTerminalSession(options?: {
+    cwd?: string;
     initialPresentation?: "background" | "focused";
     terminalEngine?: TerminalEngine;
     title?: string;
   }): Promise<SessionRecord | undefined> {
+    /**
+     * CDXC:Terminal-cwd 2026-07-29-21:45
+     * A caller-provided action worktree or live New Shell Here directory wins;
+     * otherwise new terminals use their active group's worktree, then the root.
+     */
+    const cwd = await this.resolveTerminalCreationCwd(options?.cwd);
+    if (!cwd) {
+      return undefined;
+    }
+
     const sessionRecord = await this.store.createSession({
       initialPresentation: options?.initialPresentation,
       terminalEngine: options?.terminalEngine ?? getDefaultTerminalEngine(),
@@ -4993,8 +5105,30 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     });
     if (sessionRecord) {
       this.clearReusedSessionCloseState(sessionRecord.sessionId);
+      await this.backend.createOrAttachSession(sessionRecord, { cwd });
     }
     return sessionRecord;
+  }
+
+  private async resolveTerminalCreationCwd(preferredCwd?: string): Promise<string | undefined> {
+    const cwd =
+      preferredCwd?.trim() ||
+      this.store.getActiveGroup()?.worktreePath?.trim() ||
+      getDefaultWorkspaceCwd();
+
+    try {
+      const fileStat = await vscode.workspace.fs.stat(vscode.Uri.file(cwd));
+      if ((fileStat.type & vscode.FileType.Directory) !== vscode.FileType.Directory) {
+        throw new Error("Not a directory");
+      }
+    } catch {
+      void vscode.window.showErrorMessage(
+        `VSmux cannot create a terminal because ${cwd} is unavailable.`,
+      );
+      return undefined;
+    }
+
+    return cwd;
   }
 
   private resolveFindPreviousSessionAgent():
@@ -5050,7 +5184,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     });
     await this.persistSessionAgentLaunchState();
     await this.refreshSidebarFromCurrentState();
-    await this.backend.createOrAttachSession(sessionRecord);
     if (shouldFocusBeforeLaunchingSidebarAgent()) {
       await this.workspacePanel.reveal();
       this.enqueueWorkspaceAutoFocus(sessionRecord.sessionId, "sidebar");
@@ -5077,24 +5210,15 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     command: string,
     cwd?: string,
   ): Promise<void> {
-    const sessionRecord = await this.createTerminalSession({ title: name });
+    const sessionRecord = await this.createTerminalSession({ cwd, title: name });
     if (!sessionRecord) {
       return;
     }
 
     await this.refreshSidebarFromCurrentState();
-    await this.backend.createOrAttachSession(sessionRecord);
     await this.workspacePanel.reveal();
     this.enqueueWorkspaceAutoFocus(sessionRecord.sessionId, "sidebar");
     await this.afterStateChange({ sidebarAlreadyRefreshed: true });
-    const normalizedCwd = cwd?.trim();
-    if (normalizedCwd && normalizedCwd !== getDefaultWorkspaceCwd()) {
-      await this.backend.writeText(
-        sessionRecord.sessionId,
-        `cd ${quoteShellLiteral(normalizedCwd)}`,
-        true,
-      );
-    }
     await this.backend.writeText(sessionRecord.sessionId, command, true);
   }
 
@@ -5117,6 +5241,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       }
 
       const sessionRecord = await this.createTerminalSession({
+        cwd,
         initialPresentation: "background",
         title: sessionTitle,
       });
@@ -5128,7 +5253,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       try {
         await this.setSidebarCommandSession(commandButton.commandId, sessionRecord.sessionId, true);
         await this.refreshSidebarFromCurrentState();
-        await this.backend.createOrAttachSession(sessionRecord);
         await this.postSidebarCommandRunState(commandButton.commandId, runId, "running");
         this.observeSidebarCommandSessionExit(sessionRecord.sessionId, {
           closeOnExit: true,
@@ -5150,6 +5274,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     let sessionRecord = existingSession?.sessionId
       ? this.store.getSession(existingSession.sessionId)
       : undefined;
+    let didCreateSession = false;
     const existingSnapshot = sessionRecord
       ? this.backend.getSessionSnapshot(sessionRecord.sessionId)
       : undefined;
@@ -5169,18 +5294,22 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
 
     if (!sessionRecord) {
       sessionRecord = await this.createTerminalSession({
+        cwd,
         initialPresentation: "background",
         title: sessionTitle,
       });
       if (!sessionRecord) {
         return;
       }
+      didCreateSession = true;
 
       await this.setSidebarCommandSession(commandButton.commandId, sessionRecord.sessionId, false);
       await this.refreshSidebarFromCurrentState();
     }
 
-    await this.backend.createOrAttachSession(sessionRecord);
+    if (!didCreateSession) {
+      await this.backend.createOrAttachSession(sessionRecord);
+    }
     await this.writeSidebarCommandToSession(sessionRecord.sessionId, command, cwd, false);
   }
 

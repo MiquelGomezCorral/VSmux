@@ -820,6 +820,7 @@ body {
 }
 
 .workspace-pane-rename-button,
+.workspace-pane-new-shell-button,
 .workspace-pane-fork-button,
 .workspace-pane-font-size-button,
 .workspace-pane-sleep-button,
@@ -848,6 +849,8 @@ body {
 
 .workspace-pane-rename-button:hover,
 .workspace-pane-rename-button:focus-visible,
+.workspace-pane-new-shell-button:hover,
+.workspace-pane-new-shell-button:focus-visible,
 .workspace-pane-fork-button:hover,
 .workspace-pane-fork-button:focus-visible,
 .workspace-pane-font-size-button:hover,
@@ -863,6 +866,7 @@ body {
 }
 
 .workspace-pane-rename-button:active,
+.workspace-pane-new-shell-button:active,
 .workspace-pane-fork-button:active,
 .workspace-pane-font-size-button:active,
 .workspace-pane-sleep-button:active,
