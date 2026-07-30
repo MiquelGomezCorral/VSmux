@@ -3818,7 +3818,11 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   }
 
   private async handleConfigurationChange(event: vscode.ConfigurationChangeEvent): Promise<void> {
-    if (!event.affectsConfiguration(SETTINGS_SECTION)) {
+    if (
+      !event.affectsConfiguration(SETTINGS_SECTION) &&
+      !event.affectsConfiguration("terminal.integrated") &&
+      !event.affectsConfiguration("editor.fontFamily")
+    ) {
       return;
     }
 
@@ -3904,6 +3908,8 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     event: vscode.ConfigurationChangeEvent,
   ): boolean {
     return (
+      event.affectsConfiguration("terminal.integrated") ||
+      event.affectsConfiguration("editor.fontFamily") ||
       event.affectsConfiguration(`${SETTINGS_SECTION}.${DEBUGGING_MODE_SETTING}`) ||
       event.affectsConfiguration(`${SETTINGS_SECTION}.${TERMINAL_FONT_FAMILY_SETTING}`) ||
       event.affectsConfiguration(`${SETTINGS_SECTION}.${TERMINAL_FONT_SIZE_SETTING}`) ||
@@ -4830,9 +4836,11 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       }
 
       if (!this.workspacePanel.isVisible() && visibleSessions.length > 0) {
+        await this.refreshWorkspacePanel();
         await this.workspacePanel.reveal();
+      } else {
+        await this.refreshWorkspacePanel();
       }
-      await this.refreshWorkspacePanel();
       logVSmuxDebug("controller.reconcile.complete", {
         snapshot: this.describeActiveSnapshot(),
         version: requestVersion,

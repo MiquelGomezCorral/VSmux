@@ -54,6 +54,7 @@ export class WorkspacePanelManager implements vscode.Disposable {
   private latestRenderableMessage: WorkspaceRenderableMessage | undefined;
   private panelFocusContext = false;
   private panel: vscode.WebviewPanel | undefined;
+  private renderedConnectionOrigin: string | undefined;
   public constructor(private readonly options: WorkspacePanelOptions) {
     activeWorkspacePanelManager = this;
     this.disposables.push(
@@ -115,6 +116,7 @@ export class WorkspacePanelManager implements vscode.Disposable {
 
     this.panel?.dispose();
     this.panel = undefined;
+    this.renderedConnectionOrigin = undefined;
     if (activeWorkspacePanelManager === this) {
       activeWorkspacePanelManager = undefined;
     }
@@ -159,6 +161,7 @@ export class WorkspacePanelManager implements vscode.Disposable {
     });
     this.panel?.dispose();
     this.panel = undefined;
+    this.renderedConnectionOrigin = undefined;
     void this.setWorkspacePanelFocusContext(false);
   }
 
@@ -166,6 +169,15 @@ export class WorkspacePanelManager implements vscode.Disposable {
     this.latestMessage = stripWorkspacePanelTransientFields(message);
     if (isWorkspaceRenderableMessage(this.latestMessage)) {
       this.latestRenderableMessage = this.latestMessage;
+    }
+    if (
+      this.panel &&
+      isWorkspaceRenderableMessage(message) &&
+      this.latestRenderableMessage &&
+      getWorkspaceConnectionOrigin(this.latestRenderableMessage) !== this.renderedConnectionOrigin
+    ) {
+      this.assignPanelHtml(this.panel);
+      return;
     }
     if (!this.panel) {
       logVSmuxDebug("workspace.panel.postMessageBuffered", {
@@ -333,11 +345,7 @@ export class WorkspacePanelManager implements vscode.Disposable {
       }
       void this.options.onMessage(message);
     });
-    panel.webview.html = getWorkspaceHtml(
-      panel.webview,
-      this.options.context.extensionUri,
-      this.latestRenderableMessage,
-    );
+    this.assignPanelHtml(panel);
     void appendWorkspacePanelBlankGrayReproLog(
       getDefaultWorkspaceCwd(),
       "workspace.panel.htmlAssigned",
@@ -385,6 +393,7 @@ export class WorkspacePanelManager implements vscode.Disposable {
       });
       if (this.panel === panel) {
         this.panel = undefined;
+        this.renderedConnectionOrigin = undefined;
       }
       void this.setWorkspacePanelFocusContext(false);
       void this.options.onDidDispose?.();
@@ -414,6 +423,19 @@ export class WorkspacePanelManager implements vscode.Disposable {
     if (this.latestMessage && this.latestMessage !== this.latestRenderableMessage) {
       await webview.postMessage(this.latestMessage);
     }
+  }
+
+  /**
+   * CDXC:TerminalTransport 2026-07-30-11:52 The webview CSP must include the
+   * current tunneled daemon origin before its first terminal socket attaches.
+   */
+  private assignPanelHtml(panel: vscode.WebviewPanel): void {
+    panel.webview.html = getWorkspaceHtml(
+      panel.webview,
+      this.options.context.extensionUri,
+      this.latestRenderableMessage,
+    );
+    this.renderedConnectionOrigin = getWorkspaceConnectionOrigin(this.latestRenderableMessage);
   }
 
   private async syncWorkspacePanelFocusContext(panel: vscode.WebviewPanel): Promise<void> {
@@ -477,6 +499,7 @@ function getWorkspaceHtml(
     vscode.Uri.joinPath(extensionUri, "out", "workspace", "style.css"),
   );
   const nonce = getNonce();
+  const connectionOrigin = getWorkspaceConnectionOrigin(bootstrapMessage);
   const csp = [
     "default-src 'none'",
     `style-src ${webview.cspSource} 'unsafe-inline' http://127.0.0.1:*`,
@@ -484,7 +507,9 @@ function getWorkspaceHtml(
     `img-src ${webview.cspSource} data: blob: http://127.0.0.1:*`,
     `font-src ${webview.cspSource} data: http://127.0.0.1:*`,
     `worker-src ${webview.cspSource} blob: http://127.0.0.1:*`,
-    `connect-src ${webview.cspSource} ws://127.0.0.1:* http://127.0.0.1:*`,
+    `connect-src ${webview.cspSource} ws://127.0.0.1:* http://127.0.0.1:*${
+      connectionOrigin ? ` ${connectionOrigin}` : ""
+    }`,
     `frame-src ${webview.cspSource} data: blob:`,
   ].join("; ");
   const bootstrapScript = getWorkspaceBootstrapScript(bootstrapMessage, nonce);
@@ -515,6 +540,10 @@ function getWorkspaceHtml(
     <script nonce="${nonce}" src="${scriptUri}" type="module"></script>
   </body>
 </html>`;
+}
+
+function getWorkspaceConnectionOrigin(message?: WorkspaceRenderableMessage): string | undefined {
+  return message ? new URL(message.connection.baseUrl).origin : undefined;
 }
 
 function getWorkspaceEarlyDiagnosticsScript(

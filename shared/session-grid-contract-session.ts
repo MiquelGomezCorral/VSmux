@@ -34,7 +34,7 @@ import { normalizeT3SessionMetadata } from "./t3-session-metadata";
 const LEADING_TERMINAL_TITLE_STATUS_MARKER_PATTERN = /^[\s\u2800-\u28ff·•⋅◦✳*✶✻✽✸✹✺✷✴✦◇🤖🔔]+/u;
 const LEADING_TERMINAL_TITLE_PREFIX_PATTERN = /^(?:OC\s*\|\s*)+/iu;
 export const DEFAULT_TERMINAL_SESSION_TITLE = "Terminal Session";
-const DEFAULT_TERMINAL_ENGINE: TerminalEngine = "ghostty-non-persistent";
+const DEFAULT_TERMINAL_ENGINE: TerminalEngine = "xterm";
 const IGNORED_GENERIC_TERMINAL_TITLES = new Set([
   "claude",
   "claude code",
@@ -408,7 +408,7 @@ export function normalizeTerminalEngine(value: string | undefined): TerminalEngi
   }
 
   if (value === "non-persistent") {
-    return "non-persistent";
+    return "xterm";
   }
 
   if (value === "wterm") {

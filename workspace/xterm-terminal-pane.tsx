@@ -1173,7 +1173,10 @@ export const XtermTerminalPane: React.FC<XtermTerminalPaneProps> = ({
         return;
       }
 
-      const socketUrl = new URL("/session", connection.baseUrl);
+      const socketUrl = new URL(connection.baseUrl);
+      socketUrl.pathname = `${
+        socketUrl.pathname.endsWith("/") ? socketUrl.pathname : `${socketUrl.pathname}/`
+      }session`;
       socketUrl.searchParams.set("token", connection.token);
       socketUrl.searchParams.set("workspaceId", connection.workspaceId);
       socketUrl.searchParams.set("sessionId", pane.sessionId);
@@ -1289,8 +1292,12 @@ export const XtermTerminalPane: React.FC<XtermTerminalPaneProps> = ({
       };
     };
 
+    /**
+     * CDXC:TerminalStartup 2026-07-30-11:32 A slow or unavailable configured
+     * font must not delay attaching an already-running shell to its visible pane.
+     */
+    void ensureWebFontsLoaded(terminalAppearanceOptions.fontFamily, "initial");
     void (async () => {
-      await ensureWebFontsLoaded(terminalAppearanceOptions.fontFamily, "initial");
       if (didDispose || !containerRef.current) {
         return;
       }

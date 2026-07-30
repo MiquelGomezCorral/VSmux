@@ -522,7 +522,7 @@
             "Not bundled with VSmux and not usually installed by default. Install it first for the intended look.",
             "Not bundled with VSmux and not usually installed by default. Install it first for the intended look."
           ],
-          "description": "Choose the font preset used by VSmux workspace terminals."
+          "description": "Override terminal.integrated.fontFamily for VSmux workspace terminals."
         },
         "VSmux.terminalFontSize": {
           "title": "Terminal Font Size",
@@ -531,7 +531,7 @@
           "maximum": 32,
           "default": 13,
           "scope": "application",
-          "description": "Font size used by VSmux workspace terminals."
+          "description": "Override terminal.integrated.fontSize for VSmux workspace terminals."
         },
         "VSmux.t3ZoomPercent": {
           "title": "T3 Zoom Percent",
@@ -548,7 +548,7 @@
           "minimum": 100,
           "maximum": 900,
           "default": 300,
-          "description": "Standard text weight used by xterm.js workspace terminals. Lower values look lighter."
+          "description": "Override terminal.integrated.fontWeight for VSmux workspace terminals."
         },
         "VSmux.terminalLineHeight": {
           "title": "Terminal Line Height",
@@ -556,7 +556,7 @@
           "minimum": 0.8,
           "maximum": 2,
           "default": 1.1,
-          "description": "Line height multiplier used by VSmux workspace terminals."
+          "description": "Override terminal.integrated.lineHeight for VSmux workspace terminals."
         },
         "VSmux.terminalLetterSpacing": {
           "title": "Terminal Letter Spacing",
@@ -564,7 +564,7 @@
           "minimum": -2,
           "maximum": 8,
           "default": 1.1,
-          "description": "Letter spacing used by VSmux workspace terminals."
+          "description": "Override terminal.integrated.letterSpacing for VSmux workspace terminals."
         },
         "VSmux.terminalCursorStyle": {
           "title": "Terminal Cursor Style",
@@ -580,14 +580,14 @@
             "Block",
             "Underline"
           ],
-          "description": "Cursor style used by VSmux workspace terminals."
+          "description": "Override terminal.integrated.cursorStyle for VSmux workspace terminals."
         },
         "VSmux.terminalEngine": {
           "title": "Terminal Engine",
           "type": "string",
-          "default": "non-persistent",
+          "default": "xterm",
           "enum": [
-            "non-persistent",
+            "xterm",
             "ghostty-non-persistent"
           ],
           "enumItemLabels": [
@@ -595,7 +595,7 @@
             "Ghostty"
           ],
           "enumDescriptions": [
-            "Default. Live xterm.js terminal attached straight to the backend PTY. On reopen or reload, resumable sessions are recreated and resumed; other sessions reopen as a frozen snapshot.",
+            "Default. Persistent xterm.js terminal attached to the backend PTY. Reopening or reloading VSmux reattaches the same shell.",
             "Ghostty-based direct PTY terminal without daemon-side persistence. On reopen or reload, resumable sessions are recreated and resumed; other sessions reopen as a frozen snapshot."
           ],
           "description": "Choose the default engine for new VSmux terminal sessions. xterm.js (recommended) is the default (slighty more stable). Ghostty is more performant but might have minor glitches occasionaly."

@@ -182,8 +182,21 @@ export class DaemonTerminalRuntime implements vscode.Disposable {
       throw new Error("VSmux daemon did not provide connection metadata.");
     }
 
+    /**
+     * CDXC:TerminalTransport 2026-07-30-11:52 Workspace webviews run on the
+     * VS Code client, so Remote SSH daemon traffic must use VS Code's external
+     * URI tunnel instead of the extension host's loopback address.
+     */
+    const externalUri = await vscode.env.asExternalUri(
+      vscode.Uri.parse(`http://127.0.0.1:${String(this.daemonInfo.port)}/`),
+    );
     return {
-      baseUrl: `ws://127.0.0.1:${String(this.daemonInfo.port)}`,
+      baseUrl: externalUri
+        .with({
+          path: externalUri.path.endsWith("/") ? externalUri.path : `${externalUri.path}/`,
+          scheme: externalUri.scheme === "https" ? "wss" : "ws",
+        })
+        .toString(),
       token: this.daemonInfo.token,
     };
   }

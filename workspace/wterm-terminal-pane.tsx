@@ -615,7 +615,10 @@ export const WtermTerminalPane: React.FC<WtermTerminalPaneProps> = ({
 };
 
 function buildSessionSocketUrl(connection: WorkspacePanelConnection, sessionId: string): string {
-  const socketUrl = new URL("/session", connection.baseUrl);
+  const socketUrl = new URL(connection.baseUrl);
+  socketUrl.pathname = `${
+    socketUrl.pathname.endsWith("/") ? socketUrl.pathname : `${socketUrl.pathname}/`
+  }session`;
   socketUrl.searchParams.set("token", connection.token);
   socketUrl.searchParams.set("workspaceId", connection.workspaceId);
   socketUrl.searchParams.set("sessionId", sessionId);

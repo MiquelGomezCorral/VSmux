@@ -16,7 +16,6 @@ import {
 } from "../../shared/session-grid-contract";
 import { DEFAULT_BROWSER_LAUNCH_URL } from "../../shared/sidebar-commands";
 import {
-  DEFAULT_TERMINAL_FONT_PRESET,
   getTerminalFontFamilyForPreset,
   normalizeTerminalFontPreset,
 } from "../../shared/terminal-font-preset";
@@ -94,6 +93,8 @@ export const WORKING_ACTIVITY_STALE_TIMEOUT_MS = 10_000;
 export const COMMAND_TERMINAL_EXIT_POLL_MS = 250;
 
 export type DefaultAgentCommandsSetting = Record<DefaultSidebarAgentId, string | null>;
+
+const INTEGRATED_TERMINAL_SETTINGS_SECTION = "terminal.integrated";
 
 const DEFAULT_AGENT_COMMANDS: DefaultAgentCommandsSetting = {
   claude: null,
@@ -445,14 +446,38 @@ export function getGitSkipSuggestedCommitConfirmation(): boolean {
   );
 }
 
-export function getTerminalFontFamily(): string {
-  const value =
-    vscode.workspace
-      .getConfiguration(SETTINGS_SECTION)
-      .get<string>(TERMINAL_FONT_FAMILY_SETTING, DEFAULT_TERMINAL_FONT_PRESET) ??
-    DEFAULT_TERMINAL_FONT_PRESET;
+/**
+ * CDXC:TerminalAppearance 2026-07-30-11:06 The single VSmux webview keeps its
+ * embedded Xterm panes visually aligned with VS Code's integrated terminal;
+ * explicitly configured VSmux appearance settings remain intentional overrides.
+ */
+function getExplicitVSmuxTerminalSetting<T>(setting: string): T | undefined {
+  const value = vscode.workspace.getConfiguration(SETTINGS_SECTION).inspect<T>(setting);
+  return value?.workspaceFolderValue ?? value?.workspaceValue ?? value?.globalValue;
+}
 
-  return getTerminalFontFamilyForPreset(normalizeTerminalFontPreset(value));
+function getIntegratedTerminalSetting<T>(setting: string, defaultValue: T): T {
+  return (
+    vscode.workspace
+      .getConfiguration(INTEGRATED_TERMINAL_SETTINGS_SECTION)
+      .get<T>(setting, defaultValue) ?? defaultValue
+  );
+}
+
+export function getTerminalFontFamily(): string {
+  const configuredVSmuxValue = getExplicitVSmuxTerminalSetting<string>(
+    TERMINAL_FONT_FAMILY_SETTING,
+  );
+  if (configuredVSmuxValue !== undefined) {
+    return getTerminalFontFamilyForPreset(normalizeTerminalFontPreset(configuredVSmuxValue));
+  }
+
+  const terminalFontFamily = getIntegratedTerminalSetting("fontFamily", "").trim();
+  if (terminalFontFamily) {
+    return terminalFontFamily;
+  }
+
+  return vscode.workspace.getConfiguration("editor").get<string>("fontFamily", "monospace");
 }
 
 export function getTerminalFontSize(): number {
@@ -461,10 +486,10 @@ export function getTerminalFontSize(): number {
     return clampTerminalFontSize(sharedValue);
   }
 
-  const value =
-    vscode.workspace.getConfiguration(SETTINGS_SECTION).inspect<number>(TERMINAL_FONT_SIZE_SETTING)
-      ?.globalValue ?? DEFAULT_TERMINAL_FONT_SIZE;
-  return clampTerminalFontSize(value);
+  return clampTerminalFontSize(
+    getExplicitVSmuxTerminalSetting<number>(TERMINAL_FONT_SIZE_SETTING) ??
+      getIntegratedTerminalSetting("fontSize", DEFAULT_TERMINAL_FONT_SIZE),
+  );
 }
 
 export function getT3ZoomPercent(): number {
@@ -481,11 +506,15 @@ export function getT3ZoomPercent(): number {
 
 export function getTerminalFontWeight(): number {
   const value =
-    vscode.workspace
-      .getConfiguration(SETTINGS_SECTION)
-      .get<number>(TERMINAL_FONT_WEIGHT_SETTING, DEFAULT_TERMINAL_FONT_WEIGHT) ??
-    DEFAULT_TERMINAL_FONT_WEIGHT;
-  return clampTerminalFontWeight(value);
+    getExplicitVSmuxTerminalSetting<number>(TERMINAL_FONT_WEIGHT_SETTING) ??
+    getIntegratedTerminalSetting<number | string>("fontWeight", DEFAULT_TERMINAL_FONT_WEIGHT);
+  if (value === "normal") {
+    return 400;
+  }
+  if (value === "bold") {
+    return 700;
+  }
+  return clampTerminalFontWeight(Number(value));
 }
 
 export function clampTerminalFontWeight(value: number): number {
@@ -522,42 +551,50 @@ export async function resetT3ZoomPercent(): Promise<void> {
 }
 
 export function getTerminalLineHeight(): number {
-  const value =
-    vscode.workspace
-      .getConfiguration(SETTINGS_SECTION)
-      .get<number>(TERMINAL_LINE_HEIGHT_SETTING, 1.1) ?? 1.1;
-  return clampNumber(value, 0.8, 2, 1.1);
+  return clampNumber(
+    getExplicitVSmuxTerminalSetting<number>(TERMINAL_LINE_HEIGHT_SETTING) ??
+      getIntegratedTerminalSetting("lineHeight", 1.1),
+    0.8,
+    2,
+    1.1,
+  );
 }
 
 export function getTerminalLetterSpacing(): number {
-  const value =
-    vscode.workspace
-      .getConfiguration(SETTINGS_SECTION)
-      .get<number>(TERMINAL_LETTER_SPACING_SETTING, 1.1) ?? 1.1;
-  return clampNumber(value, -2, 8, 1.1);
+  return clampNumber(
+    getExplicitVSmuxTerminalSetting<number>(TERMINAL_LETTER_SPACING_SETTING) ??
+      getIntegratedTerminalSetting("letterSpacing", 1.1),
+    -2,
+    8,
+    1.1,
+  );
 }
 
 export function getTerminalCursorStyle(): "bar" | "block" | "underline" {
   const value =
-    vscode.workspace
-      .getConfiguration(SETTINGS_SECTION)
-      .get<string>(TERMINAL_CURSOR_STYLE_SETTING, "bar") ?? "bar";
+    getExplicitVSmuxTerminalSetting<string>(TERMINAL_CURSOR_STYLE_SETTING) ??
+    getIntegratedTerminalSetting("cursorStyle", "line");
   return value === "block" || value === "underline" ? value : "bar";
 }
 
 export function getTerminalCursorBlink(): boolean {
-  return false;
+  return getIntegratedTerminalSetting("cursorBlinking", false);
 }
 
 export function getDefaultTerminalEngine(): TerminalEngine {
   const value =
     vscode.workspace
       .getConfiguration(SETTINGS_SECTION)
-      .get<string>(TERMINAL_ENGINE_SETTING, "non-persistent") ?? "non-persistent";
+      .get<string>(TERMINAL_ENGINE_SETTING, "xterm") ?? "xterm";
   return normalizeTerminalEngine(value);
 }
 
 export function getXtermHeadlessScrollback(): number {
+  /**
+   * CDXC:TerminalPersistence 2026-07-30-11:21 Daemon scrollback is established
+   * with its PTY and must not follow terminal.integrated.scrollback after the
+   * session starts, which would make the frontend and daemon histories diverge.
+   */
   const value =
     vscode.workspace
       .getConfiguration(SETTINGS_SECTION)
