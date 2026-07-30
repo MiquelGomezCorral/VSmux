@@ -2,6 +2,7 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  realpathSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -9,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
@@ -24,8 +25,7 @@ const extensionId = `${packageJson.publisher}.${packageJson.name}`.toLowerCase()
 const extensionDirectoryName = `${extensionId}-${packageJson.version}`;
 const packageEntries = ["package.json", "README.md:readme.md", ...(packageJson.files ?? [])].filter(
   (entry) =>
-    !skipT3 ||
-    (!entry.startsWith("out/t3code-embed/") && !entry.startsWith("out/t3code-server/")),
+    !skipT3 || (!entry.startsWith("out/t3code-embed/") && !entry.startsWith("out/t3code-server/")),
 );
 
 function fail(message) {
@@ -87,15 +87,21 @@ function findExistingInstallRoot() {
 function candidateExtensionsDirectories() {
   const home = homedir();
   return [
+    activeRemoteExtensionsDirectory(),
     join(home, ".vscode", "extensions"),
     join(home, ".cursor", "extensions"),
     join(home, ".vscode-insiders", "extensions"),
     join(home, ".vscodium", "extensions"),
     join(home, ".windsurf", "extensions"),
-  ];
+  ].filter(Boolean);
 }
 
 function defaultExtensionsDirectory() {
+  const remoteExtensionsDirectory = activeRemoteExtensionsDirectory();
+  if (remoteExtensionsDirectory) {
+    return remoteExtensionsDirectory;
+  }
+
   const override = process.env.VSMUX_CODE_CLI?.trim().toLowerCase() ?? "";
   const home = homedir();
 
@@ -116,6 +122,24 @@ function defaultExtensionsDirectory() {
   }
 
   return join(home, ".vscode", "extensions");
+}
+
+/**
+ * CDXC:DevInstallation 2026-07-30-07:08 The dev installer must follow the active
+ * Remote VS Code CLI so reloading uses the copied build instead of a separate
+ * desktop installation.
+ */
+function activeRemoteExtensionsDirectory() {
+  const cli = process.env.VSMUX_CODE_CLI?.trim() || "code";
+  const candidates =
+    cli.includes("/") || cli.includes("\\")
+      ? [resolve(cli)]
+      : (process.env.PATH ?? "").split(delimiter).map((directory) => join(directory, cli));
+  const cliPath = candidates.find((candidate) => existsSync(candidate));
+  const normalizedCliPath = cliPath ? realpathSync(cliPath).replaceAll("\\", "/") : "";
+  const serverRoot = normalizedCliPath.match(/^(.*\/\.[^/]+-server(?:-insiders)?)(?:\/|$)/u)?.[1];
+
+  return serverRoot ? join(serverRoot, "extensions") : undefined;
 }
 
 function cleanPackageOwnedPaths(installRoot) {

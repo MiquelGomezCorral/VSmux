@@ -61,6 +61,31 @@ VSmux works great with my other tool that shows all running agent sessions in a 
 
 Full release notes: [CHANGELOG.md](./CHANGELOG.md)
 
+## Local Development
+
+<!-- CDXC:DeveloperWorkflow 2026-07-30-09:11 Keep the repeatable development, test, and local extension update commands in the repository so contributors use the same workflow. -->
+
+Run the extension typecheck and repository checks while developing:
+
+```bash
+pnpm exec tsc -p ./tsconfig.extension.json --noEmit --pretty false
+pnpm run check
+```
+
+Build and update the locally installed extension without the T3 build:
+
+```bash
+pnpm run install:dev -- --skip-t3
+```
+
+If the extension has already been built, update the local installation without rebuilding:
+
+```bash
+pnpm run install:dev -- --skip-build --skip-t3
+```
+
+Reload the VS Code window after installation to load the updated extension.
+
 ## Who Is This For?
 
 This extension is for you if:
