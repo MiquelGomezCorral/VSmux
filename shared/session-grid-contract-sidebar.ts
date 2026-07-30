@@ -324,6 +324,10 @@ export type SidebarToExtensionMessage =
       type: "toggleCompletionBell";
     }
   | {
+      sound: CompletionSoundSetting;
+      type: "setCompletionSound";
+    }
+  | {
       delta: -1 | 1;
       type: "adjustTerminalFontSize";
     }

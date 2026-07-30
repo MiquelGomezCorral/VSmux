@@ -238,6 +238,15 @@ export function reduceSidebarStoryWorkspace(
         },
       };
 
+    case "setCompletionSound":
+      return {
+        ...workspace,
+        options: {
+          ...workspace.options,
+          completionSound: message.sound,
+        },
+      };
+
     case "toggleFullscreenSession":
       return {
         ...workspace,

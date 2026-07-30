@@ -503,6 +503,8 @@ export function isSidebarMessage(candidate: unknown): candidate is SidebarToExte
     case "createSession":
     case "openBrowser":
       return true;
+    case "setCompletionSound":
+      return COMPLETION_SOUND_OPTIONS.some((option) => option.value === message.sound);
     case "openT3SessionBrowserAccessLink":
       return typeof message.url === "string" && message.url.length > 0;
     case "adjustTerminalFontSize":

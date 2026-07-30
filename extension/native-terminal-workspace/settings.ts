@@ -350,6 +350,24 @@ export function getClampedCompletionSoundSetting(): CompletionSoundSetting {
   return clampCompletionSoundSetting(value);
 }
 
+/**
+ * CDXC:CompletionSound 2026-07-30-14:21 The sidebar picker updates the
+ * highest configured scope so a workspace-folder sound selection is not masked
+ * by its existing override.
+ */
+export async function setCompletionSound(sound: CompletionSoundSetting): Promise<void> {
+  const configuration = vscode.workspace.getConfiguration(SETTINGS_SECTION);
+  const inspection = configuration.inspect<CompletionSoundSetting>(COMPLETION_SOUND_SETTING);
+  const target =
+    inspection?.workspaceFolderValue !== undefined
+      ? vscode.ConfigurationTarget.WorkspaceFolder
+      : inspection?.workspaceValue !== undefined
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+
+  await configuration.update(COMPLETION_SOUND_SETTING, sound, target);
+}
+
 export function getClampedActionCompletionSoundSetting(): CompletionSoundSetting {
   const value =
     vscode.workspace

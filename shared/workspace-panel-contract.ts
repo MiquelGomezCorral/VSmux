@@ -202,11 +202,7 @@ export type WorkspacePanelCreateSessionFromCurrentCwdMessage = {
   type: "createSessionFromCurrentCwd";
 };
 
-export type WorkspacePanelAcknowledgeSessionAttentionReason =
-  | "click"
-  | "escape"
-  | "focusDwell"
-  | "typing";
+export type WorkspacePanelAcknowledgeSessionAttentionReason = "click" | "escape" | "typing";
 
 export type WorkspacePanelAcknowledgeSessionAttentionMessage = {
   type: "acknowledgeSessionAttention";

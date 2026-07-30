@@ -7,6 +7,7 @@ import type { TerminalViewMode } from "../../shared/session-grid-contract";
 import type { SidebarActionType, SidebarCommandRunMode } from "../../shared/sidebar-commands";
 import type { SidebarAgentIcon } from "../../shared/sidebar-agents";
 import type { SidebarCommandIcon } from "../../shared/sidebar-command-icons";
+import type { CompletionSoundSetting } from "../../shared/completion-sound";
 import type { SidebarGitAction } from "../../shared/sidebar-git";
 
 export type SidebarMessageHandlers = {
@@ -94,6 +95,7 @@ export type SidebarMessageHandlers = {
   syncGroupOrder: (groupIds: readonly string[]) => Promise<void>;
   syncSessionOrder: (groupId: string, sessionIds: readonly string[]) => Promise<void>;
   syncSidebarCommandOrder: (requestId: string, commandIds: readonly string[]) => Promise<void>;
+  setCompletionSound: (sound: CompletionSoundSetting) => Promise<void>;
   toggleCompletionBell: () => Promise<void>;
   toggleFullscreenSession: () => Promise<void>;
 };
@@ -129,6 +131,9 @@ export async function dispatchSidebarMessage(
       return;
     case "toggleCompletionBell":
       await handlers.toggleCompletionBell();
+      return;
+    case "setCompletionSound":
+      await handlers.setCompletionSound(message.sound);
       return;
     case "adjustTerminalFontSize":
       await handlers.adjustTerminalFontSize(message.delta);

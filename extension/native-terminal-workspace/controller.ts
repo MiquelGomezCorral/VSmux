@@ -306,6 +306,7 @@ import {
   getT3ZoomPercent,
   resetT3ZoomPercent,
   resetTerminalFontSize,
+  setCompletionSound,
   setT3ZoomPercent,
   setTerminalFontSize,
   getXtermFrontendScrollback,
@@ -338,6 +339,7 @@ import {
   type AgentManagerXWorkspaceSnapshotMessage,
 } from "../agent-manager-x-bridge";
 import type { TerminalAgentStatus } from "../../shared/terminal-host-protocol";
+import type { CompletionSoundSetting } from "../../shared/completion-sound";
 import {
   T3_THREAD_INITIAL_BOUND_THREAD_CONFIRMATION_MS,
   T3_THREAD_CHANGE_STARTUP_SUPPRESSION_MS,
@@ -347,8 +349,6 @@ import {
 const SHORTCUT_LABEL_PLATFORM = process.platform === "darwin" ? "mac" : "default";
 const COMMAND_TERMINAL_EXIT_POLL_MS = 250;
 const COMPLETION_SOUND_CONFIRMATION_DELAY_MS = 1_000;
-const DONE_ATTENTION_FOCUS_DWELL_MS = 1_200;
-const DONE_ATTENTION_MIN_NOTICE_MS = 3_000;
 const ESCAPE_ATTENTION_SUPPRESSION_MS = 2_000;
 const FORK_RENAME_DELAY_MS = 4_000;
 const WORKSPACE_RENAME_TOAST_DURATION_MS = 3_000;
@@ -473,7 +473,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   private readonly lastActivityOverrideAtBySessionId = new Map<string, number>();
   private readonly t3WorkingStartedAtBySessionId = new Map<string, number>();
   private readonly workingStartedAtBySessionId = new Map<string, number>();
-  private readonly attentionAcknowledgementAvailableAtBySessionId = new Map<string, number>();
   private readonly focusedAtBySessionId = new Map<string, number>();
   private readonly pendingCompletionSoundTimeoutBySessionId = new Map<string, NodeJS.Timeout>();
   private pendingSettingsSoundPreview:
@@ -485,19 +484,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     | undefined;
   private lastPreviewedActionCompletionSoundSetting = getClampedActionCompletionSoundSetting();
   private lastPreviewedCompletionSoundSetting = getClampedCompletionSoundSetting();
-  private readonly pendingDeferredAttentionAcknowledgementBySessionId = new Map<
-    string,
-    {
-      reason: "click" | "escape" | "focusDwell" | "typing";
-      timeout: NodeJS.Timeout;
-    }
-  >();
-  private pendingFocusedAttentionAcknowledgement:
-    | {
-        sessionId: string;
-        timeout: NodeJS.Timeout;
-      }
-    | undefined;
   private readonly pendingFirstPromptAutoRenameBySessionId = new Set<string>();
   private readonly firstPromptAutoRenameRequestVersionBySessionId = new Map<string, number>();
   private readonly pendingForkRenameTimeoutBySessionId = new Map<string, NodeJS.Timeout>();
@@ -1228,7 +1214,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       source,
       targetGroup: this.describeFocusTraceGroup(this.store.getSessionGroup(sessionId)),
     });
-    const previousFocusedSessionId = this.store.getActiveGroup()?.snapshot.focusedSessionId;
     const shouldReattachDetachedTerminal =
       source === "sidebar" &&
       sessionRecord.kind === "terminal" &&
@@ -1237,12 +1222,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       sessionRecord.kind === "t3" && !this.isSessionVisibleInWorkspace(sessionRecord.sessionId);
     let terminalSurfaceEnsureResult: TerminalSurfaceEnsureResult = "non-terminal";
     const changed = await this.store.focusSession(sessionId);
-    if (changed || previousFocusedSessionId !== sessionId) {
-      this.focusedAtBySessionId.set(sessionId, Date.now());
-      this.syncFocusedAttentionAcknowledgement({
-        reason: "focusSession",
-      });
-    }
+    this.focusedAtBySessionId.set(sessionId, Date.now());
     logVSmuxDebug("controller.focusSession.afterStoreFocus", {
       changed,
       durationMs: Date.now() - focusStartedAt,
@@ -2705,6 +2685,10 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     await this.refreshSidebar("hydrate");
   }
 
+  public async setCompletionSound(sound: CompletionSoundSetting): Promise<void> {
+    await setCompletionSound(sound);
+  }
+
   public async adjustTerminalFontSize(delta: -1 | 1): Promise<void> {
     await setTerminalFontSize(getTerminalFontSize() + delta);
     await this.refreshWorkspacePanel();
@@ -3728,6 +3712,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
         this.setSidebarGitGenerateCommitBodyEnabled(enabled),
       setSidebarGitPrimaryAction: async (action) => this.setSidebarGitPrimaryAction(action),
       toggleActiveSessionsSortMode: async () => this.toggleActiveSessionsSortMode(),
+      setCompletionSound: async (sound) => this.setCompletionSound(sound),
       setViewMode: async (viewMode) => this.setViewMode(viewMode),
       setVisibleCount: async (visibleCount) => this.setVisibleCount(visibleCount),
       syncSidebarAgentOrder: async (requestId, agentIds) =>
@@ -5508,7 +5493,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   private clearSessionPresentationState(sessionId: string): void {
     this.activitySuppressedUntilBySessionId.delete(sessionId);
     this.attentionSuppressedUntilBySessionId.delete(sessionId);
-    this.clearAttentionAcknowledgementState(sessionId);
     this.frozenLastActivityAtBySessionId.delete(sessionId);
     this.lastActivityIgnoreUntilBySessionId.delete(sessionId);
     this.pendingT3SessionIds.delete(sessionId);
@@ -5993,13 +5977,11 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   }
 
   private async syncKnownSessionActivities(playSound: boolean): Promise<void> {
-    const previousActivityBySessionId = new Map(this.lastKnownActivityBySessionId);
     await syncKnownSessionActivities(
       this.createSessionActivityContext(),
       this.getAllSessionRecords(),
       playSound,
     );
-    this.syncAttentionAcknowledgementState(previousActivityBySessionId);
   }
 
   private syncSessionActivityState(sessionId: string, playSound: boolean): void {
@@ -6033,7 +6015,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     }
 
     this.lastKnownActivityBySessionId.set(sessionId, nextActivity);
-    this.handleAttentionActivityTransition(sessionId, previousActivity, nextActivity);
   }
 
   private recordLastActivityTransition(
@@ -6169,14 +6150,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
 
   private queueCompletionSound(sessionId: string): void {
     const queuedAt = Date.now();
-    this.attentionAcknowledgementAvailableAtBySessionId.set(
-      sessionId,
-      queuedAt + DONE_ATTENTION_MIN_NOTICE_MS,
-    );
-    this.syncFocusedAttentionAcknowledgement({
-      reason: "completion",
-    });
-
     if (!this.getCompletionBellEnabled()) {
       this.logCompletionSoundDebug("controller.completionSound.skippedDisabled", {
         completionBellEnabled: false,
@@ -6258,135 +6231,14 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     this.pendingCompletionSoundTimeoutBySessionId.set(sessionId, timeout);
   }
 
-  private syncAttentionAcknowledgementState(
-    previousActivityBySessionId: ReadonlyMap<string, "idle" | "working" | "attention">,
-  ): void {
-    const candidateSessionIds = new Set<string>([
-      ...previousActivityBySessionId.keys(),
-      ...this.lastKnownActivityBySessionId.keys(),
-    ]);
-    for (const sessionId of candidateSessionIds) {
-      this.handleAttentionActivityTransition(
-        sessionId,
-        previousActivityBySessionId.get(sessionId),
-        this.lastKnownActivityBySessionId.get(sessionId) ?? "idle",
-      );
-    }
-  }
-
-  private handleAttentionActivityTransition(
-    sessionId: string,
-    previousActivity: "idle" | "working" | "attention" | undefined,
-    nextActivity: "idle" | "working" | "attention",
-  ): void {
-    if (nextActivity === "attention") {
-      if (previousActivity !== "attention") {
-        this.attentionAcknowledgementAvailableAtBySessionId.set(
-          sessionId,
-          Date.now() + DONE_ATTENTION_MIN_NOTICE_MS,
-        );
-      }
-      this.syncFocusedAttentionAcknowledgement({
-        reason: "attention-transition",
-      });
-      return;
-    }
-
-    if (previousActivity === "attention") {
-      this.clearAttentionAcknowledgementState(sessionId);
-      this.syncFocusedAttentionAcknowledgement({
-        reason: "attention-cleared",
-      });
-    }
-  }
-
-  private clearAttentionAcknowledgementState(sessionId: string): void {
-    this.attentionAcknowledgementAvailableAtBySessionId.delete(sessionId);
-    this.clearPendingDeferredAttentionAcknowledgement(sessionId);
-    this.clearPendingFocusedAttentionAcknowledgement(sessionId);
-  }
-
-  private clearPendingDeferredAttentionAcknowledgement(sessionId: string): void {
-    const pendingAcknowledgement =
-      this.pendingDeferredAttentionAcknowledgementBySessionId.get(sessionId);
-    if (!pendingAcknowledgement) {
-      return;
-    }
-
-    clearTimeout(pendingAcknowledgement.timeout);
-    this.pendingDeferredAttentionAcknowledgementBySessionId.delete(sessionId);
-  }
-
-  private clearPendingFocusedAttentionAcknowledgement(sessionId?: string): void {
-    if (
-      !this.pendingFocusedAttentionAcknowledgement ||
-      (sessionId !== undefined &&
-        this.pendingFocusedAttentionAcknowledgement.sessionId !== sessionId)
-    ) {
-      return;
-    }
-
-    clearTimeout(this.pendingFocusedAttentionAcknowledgement.timeout);
-    this.pendingFocusedAttentionAcknowledgement = undefined;
-  }
-
-  private syncFocusedAttentionAcknowledgement(options: {
-    reason:
-      | "attention-cleared"
-      | "attention-transition"
-      | "completion"
-      | "focusSession"
-      | "workspace-acknowledged";
-  }): void {
-    const focusedSessionId = this.store.getActiveGroup()?.snapshot.focusedSessionId;
-    if (!focusedSessionId) {
-      this.clearPendingFocusedAttentionAcknowledgement();
-      return;
-    }
-
-    const focusedActivity = this.lastKnownActivityBySessionId.get(focusedSessionId);
-    if (focusedActivity !== "attention") {
-      this.clearPendingFocusedAttentionAcknowledgement();
-      return;
-    }
-
-    const focusedAt = this.focusedAtBySessionId.get(focusedSessionId) ?? Date.now();
-    const availableAt =
-      this.attentionAcknowledgementAvailableAtBySessionId.get(focusedSessionId) ?? Date.now();
-    const dueAt = Math.max(availableAt, focusedAt + DONE_ATTENTION_FOCUS_DWELL_MS);
-    const delayMs = Math.max(0, dueAt - Date.now());
-    if (
-      this.pendingFocusedAttentionAcknowledgement?.sessionId === focusedSessionId &&
-      delayMs > 0
-    ) {
-      return;
-    }
-
-    this.clearPendingFocusedAttentionAcknowledgement();
-    const timeout = setTimeout(() => {
-      const pendingSessionId = this.pendingFocusedAttentionAcknowledgement?.sessionId;
-      this.pendingFocusedAttentionAcknowledgement = undefined;
-      if (pendingSessionId !== focusedSessionId) {
-        return;
-      }
-
-      void this.acknowledgeSessionAttentionFromWorkspace(focusedSessionId, "focusDwell");
-    }, delayMs);
-    this.pendingFocusedAttentionAcknowledgement = {
-      sessionId: focusedSessionId,
-      timeout,
-    };
-    logVSmuxDebug("controller.focusedAttentionAcknowledgement.scheduled", {
-      delayMs,
-      dueAt: new Date(Date.now() + delayMs).toISOString(),
-      reason: options.reason,
-      sessionId: focusedSessionId,
-    });
-  }
-
+  /**
+   * CDXC:AttentionNotifications 2026-07-30-13:50 Completed-session attention
+   * stays visible until the user explicitly re-enters or interacts with the session;
+   * focus and dwell timers must never clear the notification.
+   */
   private async acknowledgeSessionAttentionFromWorkspace(
     sessionId: string,
-    reason: "click" | "escape" | "focusDwell" | "typing",
+    reason: "click" | "escape" | "typing",
   ): Promise<void> {
     const sessionRecord = this.store.getSession(sessionId);
     if (!sessionRecord) {
@@ -6395,27 +6247,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
 
     if (reason === "escape") {
       this.suppressSessionAttentionFromEscape(sessionRecord);
-      return;
-    }
-
-    const availableAt = this.attentionAcknowledgementAvailableAtBySessionId.get(sessionId);
-    if (availableAt !== undefined && Date.now() < availableAt) {
-      this.clearPendingDeferredAttentionAcknowledgement(sessionId);
-      const delayMs = Math.max(0, availableAt - Date.now());
-      const timeout = setTimeout(() => {
-        this.pendingDeferredAttentionAcknowledgementBySessionId.delete(sessionId);
-        void this.acknowledgeSessionAttentionFromWorkspace(sessionId, reason);
-      }, delayMs);
-      this.pendingDeferredAttentionAcknowledgementBySessionId.set(sessionId, {
-        reason,
-        timeout,
-      });
-      logVSmuxDebug("controller.acknowledgeSessionAttention.deferred", {
-        availableAt: new Date(availableAt).toISOString(),
-        delayMs,
-        reason,
-        sessionId,
-      });
       return;
     }
 
@@ -6429,10 +6260,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       return;
     }
 
-    this.clearAttentionAcknowledgementState(sessionId);
-    this.syncFocusedAttentionAcknowledgement({
-      reason: "workspace-acknowledged",
-    });
     await this.afterStateChange();
   }
 

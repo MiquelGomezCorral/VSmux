@@ -726,7 +726,6 @@ function isWorkspaceMessage(candidate: unknown): candidate is WorkspacePanelToEx
       (message.type !== "acknowledgeSessionAttention" ||
         message.reason === "click" ||
         message.reason === "escape" ||
-        message.reason === "focusDwell" ||
         message.reason === "typing")
     );
   }
