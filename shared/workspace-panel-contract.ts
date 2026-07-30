@@ -269,12 +269,6 @@ export type WorkspacePanelSyncSessionOrderMessage = {
   sessionIds: string[];
 };
 
-export type WorkspacePanelSyncPaneOrderMessage = {
-  type: "syncPaneOrder";
-  groupId: string;
-  sessionIds: string[];
-};
-
 export type WorkspacePanelDebugLogMessage = {
   details?: unknown;
   event: string;
@@ -349,7 +343,6 @@ export type WorkspacePanelToExtensionMessage =
   | WorkspacePanelResetT3ZoomPercentMessage
   | WorkspacePanelForkSessionMessage
   | WorkspacePanelSetSessionSleepingMessage
-  | WorkspacePanelSyncPaneOrderMessage
   | WorkspacePanelSyncSessionOrderMessage
   | WorkspacePanelReloadMessage
   | WorkspacePanelReloadT3SessionMessage

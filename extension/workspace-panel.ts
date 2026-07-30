@@ -749,7 +749,7 @@ function isWorkspaceMessage(candidate: unknown): candidate is WorkspacePanelToEx
   if (message.type === "resetT3ZoomPercent") {
     return true;
   }
-  if (message.type === "syncPaneOrder" || message.type === "syncSessionOrder") {
+  if (message.type === "syncSessionOrder") {
     return (
       typeof message.groupId === "string" &&
       message.groupId.length > 0 &&

@@ -36,8 +36,6 @@ export const SIDEBAR_THEME_SETTING = "sidebarTheme";
 export const AGENT_MANAGER_ZOOM_SETTING = "agentManagerZoom";
 export const SHOW_CLOSE_BUTTON_ON_SESSION_CARDS_SETTING = "showCloseButtonOnSessionCards";
 export const SHOW_HOTKEYS_ON_SESSION_CARDS_SETTING = "showHotkeysOnSessionCards";
-export const SHOW_LAST_INTERACTION_TIME_ON_SESSION_CARDS_SETTING =
-  "showLastInteractionTimeOnSessionCards";
 export const SHOW_SIDEBAR_ACTIONS_SETTING = "showSidebarActions";
 export const SHOW_SIDEBAR_AGENTS_SETTING = "showSidebarAgents";
 export const SHOW_SIDEBAR_BROWSERS_SETTING = "showSidebarBrowsers";
@@ -171,10 +169,6 @@ export function getActionCompletionSoundConfigurationKey(): string {
   return `${SETTINGS_SECTION}.${ACTION_COMPLETION_SOUND_SETTING}`;
 }
 
-export function getShowLastInteractionTimeOnSessionCardsConfigurationKey(): string {
-  return `${SETTINGS_SECTION}.${SHOW_LAST_INTERACTION_TIME_ON_SESSION_CARDS_SETTING}`;
-}
-
 export function getAgentsConfigurationKey(): string {
   return `${SETTINGS_SECTION}.${AGENTS_SETTING}`;
 }
@@ -290,27 +284,6 @@ export function getShowHotkeysOnSessionCards(): boolean {
       .getConfiguration(SETTINGS_SECTION)
       .get<boolean>(SHOW_HOTKEYS_ON_SESSION_CARDS_SETTING, false) ?? false
   );
-}
-
-export function getShowLastInteractionTimeOnSessionCards(): boolean {
-  return (
-    vscode.workspace
-      .getConfiguration(SETTINGS_SECTION)
-      .get<boolean>(SHOW_LAST_INTERACTION_TIME_ON_SESSION_CARDS_SETTING, false) ?? false
-  );
-}
-
-export async function setShowLastInteractionTimeOnSessionCards(enabled: boolean): Promise<void> {
-  const configuration = vscode.workspace.getConfiguration(SETTINGS_SECTION);
-  const inspection = configuration.inspect<boolean>(
-    SHOW_LAST_INTERACTION_TIME_ON_SESSION_CARDS_SETTING,
-  );
-  const target =
-    inspection?.workspaceValue !== undefined
-      ? vscode.ConfigurationTarget.Workspace
-      : vscode.ConfigurationTarget.Global;
-
-  await configuration.update(SHOW_LAST_INTERACTION_TIME_ON_SESSION_CARDS_SETTING, enabled, target);
 }
 
 export function getDebuggingMode(): boolean {

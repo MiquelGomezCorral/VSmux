@@ -100,10 +100,17 @@ export const ToolbarActions: Story = {
       await expectMessage({ type: "setVisibleCount", visibleCount: 4 });
     });
 
-    await step("keep the layout selector hidden", async () => {
-      await expect(
-        canvas.queryByRole("button", { name: "Open layout options for Group 4" }),
-      ).toBeNull();
+    await step("change the group layout", async () => {
+      resetSidebarStoryMessages();
+      const groupHeader = await findRequiredElement(
+        canvasElement.ownerDocument.body,
+        '[data-sidebar-group-id="group-4"] .group-head',
+        "group-4 header",
+      );
+      await userEvent.hover(groupHeader);
+      await userEvent.click(canvas.getByRole("button", { name: "Select layout for Group 4" }));
+      await userEvent.click(await body.findByRole("menuitemradio", { name: "Stacked" }));
+      await expectMessage({ type: "setViewMode", viewMode: "horizontal" });
     });
 
     await step("open sidebar settings", async () => {
@@ -226,7 +233,6 @@ export const ActiveSortToggle: Story = {
     highlightedVisibleCount: 2,
     showCloseButtonOnSessionCards: true,
     showHotkeysOnSessionCards: true,
-    showLastInteractionTimeOnSessionCards: true,
     visibleCount: 2,
   },
   play: async ({ canvasElement, step, userEvent }) => {
@@ -273,7 +279,6 @@ export const ActiveSortModeStillAllowsDragging: Story = {
     highlightedVisibleCount: 2,
     showCloseButtonOnSessionCards: true,
     showHotkeysOnSessionCards: true,
-    showLastInteractionTimeOnSessionCards: true,
     visibleCount: 2,
   },
   play: async ({ canvasElement, step, userEvent }) => {
@@ -311,8 +316,7 @@ export const ActiveSortModeStillAllowsDragging: Story = {
       const targetGroup = storyRoot.querySelector('[data-sidebar-group-id="group-2"]');
 
       await waitFor(() => {
-        expect(targetFrame).not.toHaveAttribute("data-drop-position", "before");
-        expect(targetFrame).not.toHaveAttribute("data-drop-position", "after");
+        expect(targetFrame).toHaveAttribute("data-drop-position", "before");
         expect(sourceGroup).toHaveAttribute("data-drop-target", "false");
         return expect(targetGroup).toHaveAttribute("data-drop-target", "true");
       });
@@ -367,7 +371,6 @@ export const InlineSearchFiltersGroupsInPlace: Story = {
     highlightedVisibleCount: 2,
     showCloseButtonOnSessionCards: true,
     showHotkeysOnSessionCards: true,
-    showLastInteractionTimeOnSessionCards: true,
     visibleCount: 2,
   },
   play: async ({ canvas, canvasElement, step, userEvent }) => {
@@ -443,7 +446,6 @@ export const TypingAnywhereStartsSearchAndEscapePrefersModals: Story = {
     highlightedVisibleCount: 2,
     showCloseButtonOnSessionCards: true,
     showHotkeysOnSessionCards: true,
-    showLastInteractionTimeOnSessionCards: true,
     visibleCount: 2,
   },
   play: async ({ canvas, canvasElement, step, userEvent }) => {
@@ -507,7 +509,6 @@ export const InlineSearchKeyboardSelection: Story = {
     highlightedVisibleCount: 2,
     showCloseButtonOnSessionCards: true,
     showHotkeysOnSessionCards: true,
-    showLastInteractionTimeOnSessionCards: true,
     visibleCount: 2,
   },
   play: async ({ canvas, canvasElement, step, userEvent }) => {

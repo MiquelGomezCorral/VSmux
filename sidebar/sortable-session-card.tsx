@@ -140,21 +140,15 @@ export function SortableSessionCard({
   vscode,
 }: SortableSessionCardProps) {
   const session = useSidebarStore((state) => state.sessionsById[sessionId]);
-  const {
-    renameSessionOnDoubleClick,
-    showCloseButton,
-    showDebugSessionNumbers,
-    showHotkeys,
-    showLastInteractionTime,
-  } = useSidebarStore(
-    useShallow((state) => ({
-      renameSessionOnDoubleClick: state.hud.renameSessionOnDoubleClick,
-      showCloseButton: state.hud.showCloseButtonOnSessionCards,
-      showDebugSessionNumbers: state.hud.debuggingMode,
-      showHotkeys: state.hud.showHotkeysOnSessionCards,
-      showLastInteractionTime: state.hud.showLastInteractionTimeOnSessionCards,
-    })),
-  );
+  const { renameSessionOnDoubleClick, showCloseButton, showDebugSessionNumbers, showHotkeys } =
+    useSidebarStore(
+      useShallow((state) => ({
+        renameSessionOnDoubleClick: state.hud.renameSessionOnDoubleClick,
+        showCloseButton: state.hud.showCloseButtonOnSessionCards,
+        showDebugSessionNumbers: state.hud.debuggingMode,
+        showHotkeys: state.hud.showHotkeysOnSessionCards,
+      })),
+    );
   const [contextMenuPosition, setContextMenuPosition] = useState<ContextMenuPosition>();
   const [completionFlashRunId, setCompletionFlashRunId] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -571,7 +565,6 @@ export function SortableSessionCard({
   const contextMenuDividerCount = Math.max(0, contextMenuSections.length - 1);
 
   const requestFocusSession = () => {
-    const shouldAcknowledgeAttention = session.activity === "attention";
     vscode.postMessage({
       details: {
         activity: session.activity,
@@ -749,7 +742,6 @@ export function SortableSessionCard({
               showDebugSessionNumbers={showDebugSessionNumbers}
               showCloseButton={showCloseButton}
               showHotkeys={showHotkeys}
-              showLastInteractionTime={showLastInteractionTime}
             />
           </article>
           <div aria-hidden className="session-status-dot session-status-dot-inline" />

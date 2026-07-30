@@ -73,7 +73,6 @@ const EMPTY_STATE: NativeTerminalDebugPanelState = {
       renameSessionOnDoubleClick: false,
       showCloseButtonOnSessionCards: false,
       showHotkeysOnSessionCards: false,
-      showLastInteractionTimeOnSessionCards: true,
       theme: "dark-blue",
       viewMode: "grid",
       visibleCount: 1,

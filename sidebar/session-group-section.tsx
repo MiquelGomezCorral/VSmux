@@ -2,6 +2,7 @@ import { Tooltip } from "@base-ui/react/tooltip";
 import {
   IconCaretRightFilled,
   IconGitBranch,
+  IconLayoutColumns,
   IconMessageCircle,
   IconMoon,
   IconPencil,
@@ -18,7 +19,6 @@ import { useDroppable } from "@dnd-kit/react";
 import { useSortable } from "@dnd-kit/react/sortable";
 import { createPortal } from "react-dom";
 import {
-  startTransition,
   useEffect,
   useEffectEvent,
   useRef,
@@ -29,6 +29,7 @@ import {
 } from "react";
 import {
   getSidebarSessionLifecycleState,
+  type TerminalViewMode,
   type VisibleSessionCount,
 } from "../shared/session-grid-contract";
 import { ConfirmationModal } from "./confirmation-modal";
@@ -50,6 +51,11 @@ const CONTEXT_MENU_WIDTH_PX = 164;
 const CONTEXT_MENU_ITEM_HEIGHT_PX = 34;
 const CONTEXT_MENU_VERTICAL_PADDING_PX = 12;
 const COUNT_OPTIONS: VisibleSessionCount[] = [1, 2, 3, 4, 6, 9];
+const LAYOUT_OPTIONS: readonly { label: string; viewMode: TerminalViewMode }[] = [
+  { label: "Side by side", viewMode: "vertical" },
+  { label: "Stacked", viewMode: "horizontal" },
+  { label: "Grid", viewMode: "grid" },
+];
 const GROUP_CONTROL_MENU_MARGIN_PX = 12;
 const GROUP_DRAG_HOLD_DELAY_MS = 130;
 const GROUP_DRAG_HOLD_TOLERANCE_PX = 12;
@@ -100,7 +106,7 @@ type ContextMenuPosition = {
   y: number;
 };
 
-type GroupControlMenu = "visible-count";
+type GroupControlMenu = "layout" | "visible-count";
 
 export function getEmptyBrowserGroupExpandTooltip({
   browserTabCount,
@@ -123,14 +129,12 @@ export function getEmptyBrowserGroupExpandTooltip({
 }
 
 export type SessionGroupSectionProps = {
-  autoEdit: boolean;
   canClose: boolean;
   completionFlashNonceBySessionId?: Record<string, number>;
   draggingDisabled?: boolean;
   groupId: string;
   index: number;
   isCollapsed: boolean;
-  onAutoEditHandled: () => void;
   onCollapsedChange: (groupId: string, collapsed: boolean) => void;
   onCreateSessionRequested?: (groupId: string) => void;
   onFocusRequested?: (groupId: string, sessionId: string) => void;
@@ -182,14 +186,12 @@ function getVisibleCountMenuLabel(visibleCount: VisibleSessionCount): string {
 }
 
 export function SessionGroupSection({
-  autoEdit,
   canClose,
   completionFlashNonceBySessionId,
   draggingDisabled = false,
   groupId,
   index,
   isCollapsed,
-  onAutoEditHandled,
   onCollapsedChange,
   onCreateSessionRequested,
   onFocusRequested,
@@ -211,6 +213,7 @@ export function SessionGroupSection({
   const { collapsibleStyle, contentRef } = useCollapsibleHeight<HTMLDivElement>();
   const menuRef = useRef<HTMLDivElement>(null);
   const controlMenuRef = useRef<HTMLDivElement>(null);
+  const layoutButtonRef = useRef<HTMLButtonElement>(null);
   const visibleCountButtonRef = useRef<HTMLButtonElement>(null);
   const debugInstanceIdRef = useRef(createSessionGroupDebugInstanceId());
   const isBrowserGroup = group?.kind === "browser";
@@ -290,6 +293,8 @@ export function SessionGroupSection({
     sessions: groupSessions,
   });
   const emptyStateLabel = isBrowserGroup ? "No browsers" : "No sessions";
+  const worktreeName = getGroupWorktreeName(group.worktreePath);
+  const groupDisplayName = worktreeName ? `${group.title} · ${worktreeName}` : group.title;
 
   useEffect(() => {
     postGroupDebugLog("group.sectionMounted", {
@@ -326,18 +331,6 @@ export function SessionGroupSection({
 
     setDraftTitle(group.title);
   }, [group.title, isEditing]);
-
-  useEffect(() => {
-    if (!autoEdit) {
-      return;
-    }
-
-    startTransition(() => {
-      setDraftTitle(group.title);
-      setIsEditing(true);
-      onAutoEditHandled();
-    });
-  }, [autoEdit, group.title, onAutoEditHandled]);
 
   useEffect(() => {
     setContextMenuPosition(undefined);
@@ -413,6 +406,7 @@ export function SessionGroupSection({
 
       if (
         controlMenuRef.current?.contains(target) ||
+        layoutButtonRef.current?.contains(target) ||
         visibleCountButtonRef.current?.contains(target)
       ) {
         return;
@@ -479,6 +473,10 @@ export function SessionGroupSection({
   };
 
   const requestCreateSession = () => {
+    /**
+     * CDXC:SidebarGroups 2026-07-30-12:22 Empty workspace groups use the same
+     * focused-group creation action as their header plus button.
+     */
     onCreateSessionRequested?.(group.groupId);
 
     if (isBrowserGroup) {
@@ -503,6 +501,22 @@ export function SessionGroupSection({
     vscode.postMessage({
       type: "setVisibleCount",
       visibleCount,
+    });
+  };
+
+  /**
+   * CDXC:SessionLayout 2026-07-30-13:01 Active groups keep their split count
+   * while users choose whether those sessions appear side by side, stacked, or in a grid.
+   */
+  const setViewMode = (viewMode: TerminalViewMode) => {
+    if (isBrowserGroup) {
+      return;
+    }
+
+    setOpenControlMenu(undefined);
+    vscode.postMessage({
+      type: "setViewMode",
+      viewMode,
     });
   };
 
@@ -695,7 +709,7 @@ export function SessionGroupSection({
                         <button
                           aria-controls={isCollapsed ? undefined : sessionsRegionId}
                           aria-expanded={!isCollapsed}
-                          aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${group.title}`}
+                          aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${groupDisplayName}`}
                           className="group-collapse-button section-titlebar-toggle"
                           data-collapsed={String(isCollapsed)}
                           data-has-idle-icon="true"
@@ -737,7 +751,7 @@ export function SessionGroupSection({
                     aria-expanded={!isCollapsed}
                     aria-label={
                       emptyBrowserExpandTooltip ??
-                      `${isCollapsed ? "Expand" : "Collapse"} ${group.title}`
+                      `${isCollapsed ? "Expand" : "Collapse"} ${groupDisplayName}`
                     }
                     className="group-title-button"
                     data-empty-browser-group={String(emptyBrowserExpandTooltip !== undefined)}
@@ -748,7 +762,7 @@ export function SessionGroupSection({
                     }}
                     title={
                       emptyBrowserExpandTooltip ??
-                      `${isCollapsed ? "Expand" : "Collapse"} ${group.title}`
+                      `${isCollapsed ? "Expand" : "Collapse"} ${groupDisplayName}`
                     }
                     type="button"
                   >
@@ -756,6 +770,11 @@ export function SessionGroupSection({
                   </button>
                 </div>
                 <div className="group-title-spacer" />
+                {worktreeName ? (
+                  <span className="group-worktree-title" title={worktreeName}>
+                    {worktreeName}
+                  </span>
+                ) : null}
                 {browserTabCount > 0 ? (
                   <span
                     aria-label={`${String(browserTabCount)} browser tab${browserTabCount === 1 ? "" : "s"}`}
@@ -775,6 +794,27 @@ export function SessionGroupSection({
                 >
                   {group.isActive && !isBrowserGroup ? (
                     <div className="group-layout-controls">
+                      {group.layoutVisibleCount > 1 ? (
+                        <div className="group-control-anchor">
+                          <button
+                            aria-expanded={openControlMenu === "layout"}
+                            aria-haspopup="menu"
+                            aria-label={`Select layout for ${group.title}`}
+                            className="group-add-button group-control-button"
+                            data-open={String(openControlMenu === "layout")}
+                            onClick={() => {
+                              setOpenControlMenu((previous) =>
+                                previous === "layout" ? undefined : "layout",
+                              );
+                            }}
+                            ref={layoutButtonRef}
+                            title={`Select layout for ${group.title}`}
+                            type="button"
+                          >
+                            <IconLayoutColumns aria-hidden size={14} stroke={1.8} />
+                          </button>
+                        </div>
+                      ) : null}
                       <div className="group-control-anchor">
                         <button
                           aria-expanded={openControlMenu === "visible-count"}
@@ -891,7 +931,23 @@ export function SessionGroupSection({
                 data-drop-target={String(isGroupDropTarget)}
                 ref={emptyGroupDropTarget.ref}
               >
-                <div className="group-empty-state">{emptyStateLabel}</div>
+                {isBrowserGroup ? (
+                  <div className="group-empty-state">{emptyStateLabel}</div>
+                ) : (
+                  <button
+                    aria-label={`Create a terminal in ${groupDisplayName}`}
+                    className="group-empty-state group-empty-state-button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      requestCreateSession();
+                    }}
+                    type="button"
+                  >
+                    <IconPlus aria-hidden size={15} stroke={1.8} />
+                    <span>{emptyStateLabel}</span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -1018,6 +1074,32 @@ export function SessionGroupSection({
             document.body,
           )
         : null}
+      {!isBrowserGroup && openControlMenu === "layout"
+        ? createPortal(
+            <div
+              className="group-control-menu session-context-menu"
+              onClick={(event) => event.stopPropagation()}
+              ref={controlMenuRef}
+              role="menu"
+              style={getPortalMenuStyle(layoutButtonRef.current)}
+            >
+              {LAYOUT_OPTIONS.map((option) => (
+                <button
+                  aria-checked={group.viewMode === option.viewMode}
+                  className="session-context-menu-item group-control-menu-item"
+                  data-selected={String(group.viewMode === option.viewMode)}
+                  key={option.viewMode}
+                  onClick={() => setViewMode(option.viewMode)}
+                  role="menuitemradio"
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
       {!isBrowserGroup ? (
         <ConfirmationModal
           confirmLabel="Terminate Group"
@@ -1050,6 +1132,15 @@ function getPortalMenuStyle(button: HTMLButtonElement | null) {
     top: `${position.y}px`,
     transform: "translateX(-50%)",
   };
+}
+
+/**
+ * CDXC:GroupWorktrees 2026-07-30-13:01 Group headers keep their editable title
+ * on the left and show the assigned worktree dimmed at the right edge.
+ */
+function getGroupWorktreeName(worktreePath: string | undefined): string | undefined {
+  const pathParts = worktreePath?.trim().replaceAll("\\", "/").split("/").filter(Boolean);
+  return pathParts?.at(-1);
 }
 
 let sessionGroupDebugInstanceCounter = 0;

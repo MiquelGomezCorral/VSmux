@@ -89,7 +89,6 @@ export type SidebarMessageHandlers = {
   syncSidebarAgentOrder: (requestId: string, agentIds: readonly string[]) => Promise<void>;
   setSidebarGitPrimaryAction: (action: SidebarGitAction) => Promise<void>;
   toggleActiveSessionsSortMode: () => Promise<void>;
-  toggleShowLastInteractionTimeOnSessionCards: () => Promise<void>;
   setViewMode: (viewMode: TerminalViewMode) => Promise<void>;
   setVisibleCount: (visibleCount: VisibleSessionCount) => Promise<void>;
   syncGroupOrder: (groupIds: readonly string[]) => Promise<void>;
@@ -130,9 +129,6 @@ export async function dispatchSidebarMessage(
       return;
     case "toggleCompletionBell":
       await handlers.toggleCompletionBell();
-      return;
-    case "toggleShowLastInteractionTimeOnSessionCards":
-      await handlers.toggleShowLastInteractionTimeOnSessionCards();
       return;
     case "adjustTerminalFontSize":
       await handlers.adjustTerminalFontSize(message.delta);

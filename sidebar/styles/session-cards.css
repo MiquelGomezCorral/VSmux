@@ -442,23 +442,11 @@
 
 .session-head-trailing {
   align-items: center;
+  column-gap: calc(8px * var(--sidebar-density-scale));
   display: grid;
+  grid-template-columns: auto auto;
   justify-items: end;
   min-width: 0;
-}
-
-.session-head-trailing[data-default-trailing-display="time"] .session-last-interaction-time {
-  opacity: 1;
-}
-
-.session-head-trailing[data-default-trailing-display="icon"] .session-last-interaction-time {
-  opacity: 0;
-}
-
-.session-head-trailing[data-default-trailing-display="icon"] .session-header-agent-icon,
-.session-head-trailing[data-default-trailing-display="icon"] .session-header-agent-tabler-icon,
-.session-head-trailing[data-default-trailing-display="icon"] .session-header-reloading-icon {
-  opacity: 0.5;
 }
 
 .session-floating-agent-icon {
@@ -512,9 +500,9 @@
   width: calc(15px * var(--sidebar-density-scale));
   height: calc(15px * var(--sidebar-density-scale));
   background: var(--session-agent-icon-color, var(--app-foreground));
-  grid-area: 1 / 1;
+  grid-area: 1 / 2;
   justify-self: end;
-  opacity: 0;
+  opacity: 0.74;
   pointer-events: none;
   -webkit-mask-image: var(--session-agent-logo);
   -webkit-mask-position: center;
@@ -529,9 +517,9 @@
 
 .session-header-agent-tabler-icon {
   color: var(--session-agent-icon-color, var(--app-foreground));
-  grid-area: 1 / 1;
+  grid-area: 1 / 2;
   justify-self: end;
-  opacity: 0;
+  opacity: 0.74;
   pointer-events: none;
   transition: opacity 120ms ease;
 }
@@ -539,9 +527,9 @@
 .session-header-reloading-icon {
   animation: session-agent-icon-spin 0.9s linear infinite;
   color: var(--session-agent-icon-color, var(--app-foreground));
-  grid-area: 1 / 1;
+  grid-area: 1 / 2;
   justify-self: end;
-  opacity: 0;
+  opacity: 0.74;
   pointer-events: none;
   transition: opacity 120ms ease;
 }
@@ -615,7 +603,7 @@
   letter-spacing: 0.01em;
   line-height: 1.25;
   min-width: 0;
-  opacity: 0.35;
+  opacity: 0.75;
   overflow: hidden;
   grid-area: 1 / 1;
   justify-self: end;
@@ -624,7 +612,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   z-index: 1;
-  transition: opacity 120ms ease;
 }
 
 .session-close-button {
@@ -633,10 +620,10 @@
   background: transparent;
   border: 0;
   border-radius: calc(6px * var(--sidebar-density-scale));
-  color: var(--app-danger);
+  color: color-mix(in srgb, var(--app-muted) 78%, var(--app-foreground) 22%);
   cursor: pointer;
   display: inline-flex;
-  grid-area: 1 / 1;
+  grid-area: 1 / 2;
   height: calc(28px * var(--sidebar-density-scale));
   justify-content: center;
   margin: calc(-5px * var(--sidebar-density-scale));
@@ -659,108 +646,6 @@
   outline: none;
 }
 
-.session-frame:not(.session-history-frame) .session-last-interaction-time {
-  top: calc(1px * var(--sidebar-density-scale));
-}
-
-.session:hover .session-last-interaction-time,
-.session:focus-visible .session-last-interaction-time {
-  opacity: 1;
-}
-
-.session-frame:not(.session-history-frame)
-  .session:hover
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-last-interaction-time,
-.session-frame:not(.session-history-frame)
-  .session:focus-visible
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-last-interaction-time,
-.session-frame:not(.session-history-frame)
-  .session:has(:focus-visible)
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-last-interaction-time {
-  opacity: 0;
-}
-
-.session-frame:not(.session-history-frame)
-  .session:hover
-  .session-head-trailing[data-hover-trailing-display="time"]
-  .session-header-agent-icon,
-.session-frame:not(.session-history-frame)
-  .session:hover
-  .session-head-trailing[data-hover-trailing-display="time"]
-  .session-header-agent-tabler-icon,
-.session-frame:not(.session-history-frame)
-  .session:hover
-  .session-head-trailing[data-hover-trailing-display="time"]
-  .session-header-reloading-icon,
-.session-frame:not(.session-history-frame)
-  .session:focus-visible
-  .session-head-trailing[data-hover-trailing-display="time"]
-  .session-header-agent-icon,
-.session-frame:not(.session-history-frame)
-  .session:focus-visible
-  .session-head-trailing[data-hover-trailing-display="time"]
-  .session-header-agent-tabler-icon,
-.session-frame:not(.session-history-frame)
-  .session:focus-visible
-  .session-head-trailing[data-hover-trailing-display="time"]
-  .session-header-reloading-icon,
-.session-frame:not(.session-history-frame)
-  .session:has(:focus-visible)
-  .session-head-trailing[data-hover-trailing-display="time"]
-  .session-header-agent-icon,
-.session-frame:not(.session-history-frame)
-  .session:has(:focus-visible)
-  .session-head-trailing[data-hover-trailing-display="time"]
-  .session-header-agent-tabler-icon,
-.session-frame:not(.session-history-frame)
-  .session:has(:focus-visible)
-  .session-head-trailing[data-hover-trailing-display="time"]
-  .session-header-reloading-icon {
-  opacity: 0;
-}
-
-.session-frame:not(.session-history-frame)
-  .session:hover
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-header-agent-icon,
-.session-frame:not(.session-history-frame)
-  .session:hover
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-header-agent-tabler-icon,
-.session-frame:not(.session-history-frame)
-  .session:hover
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-header-reloading-icon,
-.session-frame:not(.session-history-frame)
-  .session:focus-visible
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-header-agent-icon,
-.session-frame:not(.session-history-frame)
-  .session:focus-visible
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-header-agent-tabler-icon,
-.session-frame:not(.session-history-frame)
-  .session:focus-visible
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-header-reloading-icon,
-.session-frame:not(.session-history-frame)
-  .session:has(:focus-visible)
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-header-agent-icon,
-.session-frame:not(.session-history-frame)
-  .session:has(:focus-visible)
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-header-agent-tabler-icon,
-.session-frame:not(.session-history-frame)
-  .session:has(:focus-visible)
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-header-reloading-icon {
-  opacity: 0.74;
-}
-
 @keyframes session-agent-icon-spin {
   from {
     transform: rotate(0deg);
@@ -769,25 +654,6 @@
   to {
     transform: rotate(360deg);
   }
-}
-
-.session-frame:not(.session-history-frame)
-  .session:hover
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-header-agent-icon[data-favorite="true"],
-.session-frame:not(.session-history-frame)
-  .session:hover
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-header-agent-tabler-icon[data-favorite="true"],
-.session-frame:not(.session-history-frame)
-  .session:focus-visible
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-header-agent-icon[data-favorite="true"],
-.session-frame:not(.session-history-frame)
-  .session:focus-visible
-  .session-head-trailing[data-hover-trailing-display="icon"]
-  .session-header-agent-tabler-icon[data-favorite="true"] {
-  opacity: 1;
 }
 
 .session-frame:not(.session-history-frame)
@@ -809,29 +675,14 @@
 .session-frame:not(.session-history-frame)
   .session:hover
   .session-head-trailing[data-show-close-button="true"]
-  :is(
-    .session-last-interaction-time,
-    .session-header-agent-icon,
-    .session-header-agent-tabler-icon,
-    .session-header-reloading-icon
-  ),
+  :is(.session-header-agent-icon, .session-header-agent-tabler-icon),
 .session-frame:not(.session-history-frame)
   .session:focus-visible
   .session-head-trailing[data-show-close-button="true"]
-  :is(
-    .session-last-interaction-time,
-    .session-header-agent-icon,
-    .session-header-agent-tabler-icon,
-    .session-header-reloading-icon
-  ),
+  :is(.session-header-agent-icon, .session-header-agent-tabler-icon),
 .session-frame:not(.session-history-frame)
   .session:has(:focus-visible)
   .session-head-trailing[data-show-close-button="true"]
-  :is(
-    .session-last-interaction-time,
-    .session-header-agent-icon,
-    .session-header-agent-tabler-icon,
-    .session-header-reloading-icon
-  ) {
+  :is(.session-header-agent-icon, .session-header-agent-tabler-icon) {
   opacity: 0;
 }

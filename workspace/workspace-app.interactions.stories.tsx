@@ -58,7 +58,7 @@ export const T3PaneActions: Story = {
   },
 };
 
-async function waitForWorkspaceReady(canvas: ReturnType<typeof within>) {
+async function waitForWorkspaceReady(_canvas: ReturnType<typeof within>) {
   await waitFor(
     () => {
       expect(
@@ -190,7 +190,6 @@ function createT3WorkspaceMessage(): SidebarHydrateMessage {
       renameSessionOnDoubleClick: false,
       showCloseButtonOnSessionCards: false,
       showHotkeysOnSessionCards: false,
-      showLastInteractionTimeOnSessionCards: true,
       theme: "dark-blue",
       viewMode: "grid",
       visibleCount: 1,

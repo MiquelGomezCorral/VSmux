@@ -323,7 +323,6 @@ function createReplayableSidebarMessage(
       },
       showCloseButtonOnSessionCards: true,
       showHotkeysOnSessionCards: true,
-      showLastInteractionTimeOnSessionCards: true,
       theme: "plain-dark",
       viewMode: "grid",
       visibleCount: 1,

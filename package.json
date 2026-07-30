@@ -644,19 +644,13 @@
           "title": "Show Close Button On Session Cards",
           "type": "boolean",
           "default": true,
-          "description": "Replace the trailing session-card timestamp with a close button on hover. You can always cmd + click or middle click on a card to close it."
+          "description": "Replace the trailing terminal or agent icon with a close button on hover while keeping its timestamp visible. You can always cmd + click or middle click on a card to close it."
         },
         "VSmux.showHotkeysOnSessionCards": {
           "title": "Show Hotkeys On Session Cards",
           "type": "boolean",
           "default": false,
           "description": "Show hotkey labels on session cards all the time instead of only revealing them when you hover a card."
-        },
-        "VSmux.showLastInteractionTimeOnSessionCards": {
-          "title": "Show Last Active Time By Default",
-          "type": "boolean",
-          "default": false,
-          "description": "When enabled, session cards show a small relative timestamp by default and reveal the agent icon on hover. When disabled, the agent icon shows by default and the timestamp appears on hover."
         },
         "VSmux.showSidebarActions": {
           "title": "Show Sidebar Actions",

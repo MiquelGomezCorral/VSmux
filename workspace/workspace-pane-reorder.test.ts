@@ -8,7 +8,7 @@ import {
 } from "./workspace-pane-reorder";
 
 describe("buildVisiblePaneOrderForDrop", () => {
-  test("should swap only the dragged and target terminal slots and keep non-terminal panes fixed", () => {
+  test("should insert the dragged pane at the target slot and keep non-reorderable panes fixed", () => {
     expect(
       buildVisiblePaneOrderForDrop(
         ["terminal-1", "t3-1", "terminal-2", "terminal-3"],
@@ -16,10 +16,10 @@ describe("buildVisiblePaneOrderForDrop", () => {
         "terminal-3",
         "terminal-1",
       ),
-    ).toEqual(["terminal-3", "t3-1", "terminal-2", "terminal-1"]);
+    ).toEqual(["terminal-3", "t3-1", "terminal-1", "terminal-2"]);
   });
 
-  test("should swap two visible panes when dragging the left pane onto the right pane", () => {
+  test("should place a pane after the target when dragging from left to right", () => {
     expect(
       buildVisiblePaneOrderForDrop(
         ["terminal-1", "terminal-2"],
@@ -30,7 +30,7 @@ describe("buildVisiblePaneOrderForDrop", () => {
     ).toEqual(["terminal-2", "terminal-1"]);
   });
 
-  test("should swap two non-adjacent terminal panes without shifting the middle terminal", () => {
+  test("should shift middle panes when moving a terminal across the grid", () => {
     expect(
       buildVisiblePaneOrderForDrop(
         ["terminal-1", "terminal-2", "terminal-3"],
@@ -38,7 +38,7 @@ describe("buildVisiblePaneOrderForDrop", () => {
         "terminal-1",
         "terminal-3",
       ),
-    ).toEqual(["terminal-3", "terminal-2", "terminal-1"]);
+    ).toEqual(["terminal-2", "terminal-3", "terminal-1"]);
   });
 
   test("should return undefined when the drop target is the dragged pane", () => {

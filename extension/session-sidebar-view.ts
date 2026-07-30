@@ -494,7 +494,6 @@ export function isSidebarMessage(candidate: unknown): candidate is SidebarToExte
   switch (message.type) {
     case "openSettings":
     case "toggleCompletionBell":
-    case "toggleShowLastInteractionTimeOnSessionCards":
     case "openWorkspaceWelcome":
     case "promptFindPreviousSession":
     case "refreshDaemonSessions":

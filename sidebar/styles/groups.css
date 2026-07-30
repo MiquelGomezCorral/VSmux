@@ -179,7 +179,6 @@
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
-  max-width: min(100%, 220px);
 }
 
 .group-title-handle[data-draggable="true"] {
@@ -211,6 +210,21 @@
   text-align: left;
   width: 100%;
   max-width: 100%;
+}
+
+.group-worktree-title {
+  color: color-mix(in srgb, var(--app-muted) 82%, var(--app-foreground) 18%);
+  flex: 0 1 50%;
+  font-size: 0.9em;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
 }
 
 .group-title-button:hover .group-title,
@@ -521,7 +535,7 @@
 .group:hover .group-meta {
   gap: calc(6px * var(--sidebar-density-scale));
   margin-left: calc(6px * var(--sidebar-density-scale));
-  max-width: calc(56px * var(--sidebar-density-scale));
+  max-width: calc(84px * var(--sidebar-density-scale));
   opacity: 1;
   pointer-events: auto;
   transition-delay: 0s;
@@ -669,6 +683,22 @@
   justify-self: stretch;
   line-height: 1;
   width: 100%;
+}
+
+.group-empty-state-button {
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  gap: calc(7px * var(--sidebar-density-scale));
+  padding: 0 calc(12px * var(--sidebar-density-scale));
+}
+
+.group-empty-state-button:hover,
+.group-empty-state-button:focus-visible {
+  background: color-mix(in srgb, var(--app-button-background) 12%, transparent);
+  border-color: color-mix(in srgb, var(--app-button-background) 76%, var(--app-border));
+  color: var(--app-foreground);
+  outline: none;
 }
 
 .group-create-list {

@@ -886,7 +886,7 @@ export const WorkspaceApp: React.FC<WorkspaceAppProps> = ({ messageSource = wind
     }
   }, [activeGroupLayoutKey, activeGroupSessionIdSet, visiblePaneLayoutBySessionId]);
   const reorderablePaneIds = useMemo(
-    () => visiblePanes.filter((pane) => pane.kind === "terminal").map((pane) => pane.sessionId),
+    () => visiblePanes.map((pane) => pane.sessionId),
     [visiblePanes],
   );
   const terminalPanes = useMemo(
@@ -1332,6 +1332,10 @@ export const WorkspaceApp: React.FC<WorkspaceAppProps> = ({ messageSource = wind
     confirmWorkspaceToastForSession(sessionId);
   };
 
+  /**
+   * CDXC:SessionOrder 2026-07-30-13:01 Workspace header drags use the same
+   * canonical group order as sidebar drags so pane placement stays synchronized everywhere.
+   */
   const requestPaneReorder = (sourcePaneId: string, targetPaneId: string) => {
     if (!workspaceState) {
       return;
@@ -1348,14 +1352,16 @@ export const WorkspaceApp: React.FC<WorkspaceAppProps> = ({ messageSource = wind
     }
 
     const nextPaneOrder = buildFullSessionOrderFromVisiblePaneOrder(
-      panes.map((pane) => pane.sessionId),
+      panes
+        .filter((pane) => activeGroupSessionIdSet.has(pane.sessionId))
+        .map((pane) => pane.sessionId),
       nextVisiblePaneOrder,
     );
     if (!nextPaneOrder) {
       return;
     }
 
-    setLocalPaneOrder(nextVisiblePaneOrder);
+    setLocalPaneOrder(nextPaneOrder);
     postWorkspaceDebugLog(workspaceState.debuggingMode, "drag.reorderRequested", {
       groupId: workspaceState.activeGroupId,
       nextPaneOrder,
@@ -1366,7 +1372,7 @@ export const WorkspaceApp: React.FC<WorkspaceAppProps> = ({ messageSource = wind
     postToExtension({
       groupId: workspaceState.activeGroupId,
       sessionIds: nextPaneOrder,
-      type: "syncPaneOrder",
+      type: "syncSessionOrder",
     });
   };
   requestPaneReorderRef.current = requestPaneReorder;
@@ -1712,9 +1718,7 @@ export const WorkspaceApp: React.FC<WorkspaceAppProps> = ({ messageSource = wind
                 type: "closeSession",
               })
             }
-            onCreateSessionFromCurrentCwd={() =>
-              requestCreateSessionFromCurrentCwd(pane.sessionId)
-            }
+            onCreateSessionFromCurrentCwd={() => requestCreateSessionFromCurrentCwd(pane.sessionId)}
             onConfirmToastDismissed={dismissWorkspaceToast}
             onConfirmToastShown={showWorkspaceToast}
             onRename={() =>
@@ -1782,7 +1786,7 @@ export const WorkspaceApp: React.FC<WorkspaceAppProps> = ({ messageSource = wind
               pane.kind === "terminal" ? getTerminalPortalTargetRef(pane.sessionId) : undefined
             }
             t3Appearance={workspaceState.t3Appearance}
-            canDrag={pane.kind === "terminal" && pane.isVisible && reorderablePaneIds.length > 1}
+            canDrag={pane.isVisible && reorderablePaneIds.length > 1}
             isDragging={draggedPaneId === pane.sessionId}
             isDropTarget={dropTargetPaneId === pane.sessionId && draggedPaneId !== pane.sessionId}
             onHeaderNativeDragStart={(event) => {
@@ -1792,7 +1796,7 @@ export const WorkspaceApp: React.FC<WorkspaceAppProps> = ({ messageSource = wind
               preventWorkspacePaneNativeDrag(event);
             }}
             onHeaderPointerDown={(event) => {
-              if (pane.kind !== "terminal" || !pane.isVisible || event.button !== 0) {
+              if (!pane.isVisible || event.button !== 0) {
                 return;
               }
 

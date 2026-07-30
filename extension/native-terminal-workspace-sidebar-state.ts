@@ -243,6 +243,7 @@ function buildSidebarGroup(
     title: group.title,
     viewMode: presentedSnapshot.viewMode,
     visibleCount: presentedSnapshot.visibleCount,
+    ...(group.worktreePath ? { worktreePath: group.worktreePath } : {}),
   };
 }
 

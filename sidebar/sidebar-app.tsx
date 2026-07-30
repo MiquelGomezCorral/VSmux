@@ -7,10 +7,8 @@ import {
   IconBellOff,
   IconArrowsSort,
   IconBookmark,
-  IconEye,
   IconHelpCircle,
   IconHistory,
-  IconLayoutSidebar,
   IconPencil,
   IconPlusFilled,
   IconSearch,
@@ -76,11 +74,7 @@ import {
   reconcileCollapsedGroupsById,
 } from "./browser-group-collapse";
 import { SessionGroupSection } from "./session-group-section";
-import {
-  applyTextEditingKey,
-  isEditableKeyboardTarget,
-  isTextEditingKey,
-} from "./text-input-keyboard";
+import { applyTextEditingKey, isTextEditingKey } from "./text-input-keyboard";
 import { TOOLTIP_DELAY_MS } from "./tooltip-delay";
 import { useScrollGlowState } from "./use-scroll-glow-state";
 import type { WebviewApi } from "./webview-api";
@@ -154,10 +148,9 @@ const DEBUG_BUILD_STAMP_STYLE: CSSProperties = {
 
 export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) {
   const [isStartupInteractionBlocked, setIsStartupInteractionBlocked] = useState(true);
-  const [autoEditingGroupId, setAutoEditingGroupId] = useState<string>();
-  const [agentCreateRequestId, setAgentCreateRequestId] = useState(0);
-  const [commandCreateActionType, setCommandCreateActionType] = useState<SidebarActionType>();
-  const [commandCreateRequestId, setCommandCreateRequestId] = useState(0);
+  const [agentCreateRequestId] = useState(0);
+  const [commandCreateActionType] = useState<SidebarActionType>();
+  const [commandCreateRequestId] = useState(0);
   const [isOverflowMenuOpen, setIsOverflowMenuOpen] = useState(false);
   const [isDaemonSessionsOpen, setIsDaemonSessionsOpen] = useState(false);
   const [isPinnedPromptsOpen, setIsPinnedPromptsOpen] = useState(false);
@@ -177,7 +170,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
   const [isSessionSearchSelectionVisible, setIsSessionSearchSelectionVisible] = useState(false);
   const [selectedSessionSearchResult, setSelectedSessionSearchResult] =
     useState<SidebarSessionSearchSelection>();
-  const pendingCreateGroupRef = useRef(false);
   const didResetStoreRef = useRef(false);
   const overflowMenuRef = useRef<HTMLDivElement>(null);
   const sessionGroupsPanelRef = useRef<HTMLElement>(null);
@@ -231,7 +223,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
     projectHeader,
     revision,
     showHotkeysOnSessionCards,
-    showLastInteractionTimeOnSessionCards,
     sessionsById,
     theme,
     workspaceGroupIds,
@@ -250,7 +241,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
       revision: state.revision,
       sectionVisibility: state.hud.sectionVisibility,
       showHotkeysOnSessionCards: state.hud.showHotkeysOnSessionCards,
-      showLastInteractionTimeOnSessionCards: state.hud.showLastInteractionTimeOnSessionCards,
       sessionsById: state.sessionsById,
       theme: state.hud.theme,
       workspaceGroupIds: state.workspaceGroupIds,
@@ -483,17 +473,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
         revision: event.data.revision,
         sessionCount: countSidebarSessions(event.data.groups),
       });
-    }
-
-    if (pendingCreateGroupRef.current) {
-      const nextGroupId = findCreatedGroupId(
-        groupOrder,
-        event.data.groups.map((group) => group.groupId),
-      );
-      if (nextGroupId) {
-        setAutoEditingGroupId(nextGroupId);
-        pendingCreateGroupRef.current = false;
-      }
     }
 
     applySidebarMessage(event.data);
@@ -984,11 +963,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
 
   const updateSessionDropIndicator = useEffectEvent(
     (event: Parameters<NonNullable<DragDropEventHandlers["onDragOver"]>>[0]) => {
-      if (isManualActiveSessionsSort) {
-        setSessionDropIndicatorGroupId(undefined);
-        return;
-      }
-
       const sourceData = getSidebarDropData(event.operation.source);
       if (sourceData?.kind !== "session") {
         setSessionDropIndicatorGroupId(undefined);
@@ -1154,10 +1128,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
         targetIndex,
         type: "moveSessionToGroup",
       });
-      return;
-    }
-
-    if (!isManualActiveSessionsSort) {
       return;
     }
 
@@ -1457,11 +1427,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
     vscode.postMessage({ type: "toggleCompletionBell" });
   };
 
-  const toggleShowLastInteractionTimeOnSessionCards = () => {
-    setIsOverflowMenuOpen(false);
-    vscode.postMessage({ type: "toggleShowLastInteractionTimeOnSessionCards" });
-  };
-
   const toggleActiveSessionsSortMode = () => {
     setIsOverflowMenuOpen(false);
     vscode.postMessage({ type: "toggleActiveSessionsSortMode" });
@@ -1529,12 +1494,10 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
     onToggleSessionSearch: toggleSessionSearch,
     onToggleActiveSessionsSortMode: toggleActiveSessionsSortMode,
     onToggleBell: toggleCompletionBell,
-    onToggleShowLastInteractionTimeOnSessionCards: toggleShowLastInteractionTimeOnSessionCards,
     onToggleMenu: toggleOverflowMenu,
     onToggleScratchPad: openScratchPad,
     overflowMenuPosition,
     overflowMenuRef,
-    showLastInteractionTimeOnSessionCards,
   } satisfies RenderSidebarTopControlsOptions;
 
   return (
@@ -1623,7 +1586,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
                 <div className="group-list browser-group-list">
                   {displayedBrowserGroupIds.map((groupId) => (
                     <SessionGroupSection
-                      autoEdit={false}
                       canClose={false}
                       completionFlashNonceBySessionId={completionFlashNonceBySessionId}
                       draggingDisabled={isSessionSearchOpen}
@@ -1631,7 +1593,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
                       index={-1}
                       isCollapsed={collapsedGroupsById[groupId] === true}
                       key={groupId}
-                      onAutoEditHandled={() => undefined}
                       onCollapsedChange={setGroupCollapsed}
                       onCreateSessionRequested={(requestedGroupId) =>
                         prepareBrowserGroupsForOpen([requestedGroupId])
@@ -1659,7 +1620,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
                 <div className="group-list workspace-group-list">
                   {displayedWorkspaceGroupIds.map((groupId, groupIndex) => (
                     <SessionGroupSection
-                      autoEdit={autoEditingGroupId === groupId}
                       canClose={effectiveGroupIds.length > 1}
                       completionFlashNonceBySessionId={completionFlashNonceBySessionId}
                       draggingDisabled={isSessionSearchOpen}
@@ -1667,7 +1627,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
                       index={groupIndex}
                       isCollapsed={collapsedGroupsById[groupId] === true}
                       key={groupId}
-                      onAutoEditHandled={() => setAutoEditingGroupId(undefined)}
                       onCollapsedChange={setGroupCollapsed}
                       onFocusRequested={applyLocalFocus}
                       orderedSessionIds={displayedWorkspaceSessionIdsByGroup[groupId] ?? []}
@@ -1678,9 +1637,7 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
                           : undefined
                       }
                       sessionDropIndicatorGroupId={sessionDropIndicatorGroupId}
-                      showSessionDropPositionIndicators={
-                        !isSessionSearchOpen && isManualActiveSessionsSort
-                      }
+                      showSessionDropPositionIndicators={!isSessionSearchOpen}
                       vscode={vscode}
                     />
                   ))}
@@ -1709,10 +1666,7 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
                         aria-label="Create a new group"
                         className="group-create-button"
                         disabled={effectiveGroupIds.length >= MAX_GROUP_COUNT}
-                        onClick={() => {
-                          pendingCreateGroupRef.current = true;
-                          vscode.postMessage({ type: "createGroup" });
-                        }}
+                        onClick={() => vscode.postMessage({ type: "createGroup" })}
                         type="button"
                       >
                         <span className="group-title-wrap">
@@ -1941,14 +1895,6 @@ function haveSameSessionOrder(left: readonly string[], right: readonly string[])
   return left.every((sessionId, index) => sessionId === right[index]);
 }
 
-function findCreatedGroupId(
-  previousGroups: readonly string[],
-  nextGroups: readonly string[],
-): string | undefined {
-  const previousGroupIds = new Set(previousGroups);
-  return nextGroups.find((groupId) => !previousGroupIds.has(groupId));
-}
-
 function OverflowIcon() {
   return (
     <svg aria-hidden="true" className="toolbar-icon" viewBox="0 0 16 16">
@@ -1965,10 +1911,6 @@ function getActiveSessionsSortMenuLabel(isManualActiveSessionsSort: boolean): st
 
 function getScratchPadMenuLabel(isScratchPadOpen: boolean): string {
   return isScratchPadOpen ? "Hide Scratch Pad" : "Scratch Pad";
-}
-
-function getSessionCardTimeToggleLabel(showLastInteractionTimeOnSessionCards: boolean): string {
-  return showLastInteractionTimeOnSessionCards ? "Last Active" : "Agent Icon";
 }
 
 type RenderSidebarTopControlsOptions = {
@@ -1988,12 +1930,10 @@ type RenderSidebarTopControlsOptions = {
   onToggleSessionSearch: () => void;
   onToggleActiveSessionsSortMode: () => void;
   onToggleBell: () => void;
-  onToggleShowLastInteractionTimeOnSessionCards: () => void;
   onToggleMenu: (trigger: HTMLElement) => void;
   onToggleScratchPad: () => void;
   overflowMenuPosition?: FloatingMenuPosition;
   overflowMenuRef: RefObject<HTMLDivElement | null>;
-  showLastInteractionTimeOnSessionCards: boolean;
   showMenu?: boolean;
   showSearch?: boolean;
 };
@@ -2170,12 +2110,10 @@ function renderFloatingOverflowMenu({
   onOpenSettings,
   onShowRunning,
   onToggleActiveSessionsSortMode,
-  onToggleShowLastInteractionTimeOnSessionCards,
   onToggleMenu,
   onToggleScratchPad,
   overflowMenuPosition,
   overflowMenuRef,
-  showLastInteractionTimeOnSessionCards,
 }: RenderSidebarTopControlsOptions) {
   return (
     <>
@@ -2214,19 +2152,6 @@ function renderFloatingOverflowMenu({
                 zIndex: 250,
               }}
             >
-              <div className="session-context-menu-group">
-                <button
-                  aria-checked={showLastInteractionTimeOnSessionCards}
-                  className="session-context-menu-item"
-                  onClick={onToggleShowLastInteractionTimeOnSessionCards}
-                  role="menuitemcheckbox"
-                  type="button"
-                >
-                  <IconEye aria-hidden="true" className="session-context-menu-icon" size={14} />
-                  {getSessionCardTimeToggleLabel(showLastInteractionTimeOnSessionCards)}
-                </button>
-              </div>
-              <div className="session-context-menu-divider" role="separator" />
               <div className="session-context-menu-group">
                 {browserAccessSessionId ? (
                   <button

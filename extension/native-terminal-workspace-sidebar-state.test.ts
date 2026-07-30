@@ -983,7 +983,6 @@ function createSidebarHudState(): SidebarHydrateMessage["hud"] {
     renameSessionOnDoubleClick: false,
     showCloseButtonOnSessionCards: false,
     showHotkeysOnSessionCards: false,
-    showLastInteractionTimeOnSessionCards: false,
     theme: "dark-blue",
     viewMode: "grid",
     visibleCount: 1,

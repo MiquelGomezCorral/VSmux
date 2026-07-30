@@ -621,7 +621,7 @@ describe("WorkspacePanelManager", () => {
     manager.dispose();
   });
 
-  test("should forward pane reorder messages from the workspace webview", async () => {
+  test("should forward session reorder messages from the workspace webview", async () => {
     const onMessage = vi.fn();
     const manager = new WorkspacePanelManager({
       context: createMockContext(),
@@ -636,13 +636,13 @@ describe("WorkspacePanelManager", () => {
     panel.webview.messageListeners[0]?.({
       groupId: "group-1",
       sessionIds: ["session-2", "session-1"],
-      type: "syncPaneOrder",
+      type: "syncSessionOrder",
     });
 
     expect(onMessage).toHaveBeenCalledWith({
       groupId: "group-1",
       sessionIds: ["session-2", "session-1"],
-      type: "syncPaneOrder",
+      type: "syncSessionOrder",
     });
 
     manager.dispose();

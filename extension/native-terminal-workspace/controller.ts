@@ -179,7 +179,6 @@ import {
 import {
   getWorkspacePaneSessionRecords,
   getWorkspaceSlotSessionRecords,
-  sortWorkspacePaneSessionRecords,
 } from "./workspace-pane-session-projection";
 import {
   resolveSessionRenameTitleFromPrompt,
@@ -191,11 +190,7 @@ import {
   shouldAutoPersistT3SessionTitle,
   shouldResetAutoPersistedT3SessionTitle,
 } from "./t3-session-title-sync";
-import {
-  deleteWorkspacePaneOrderPreference,
-  getWorkspacePaneOrderPreference,
-  syncWorkspacePaneOrderPreference,
-} from "./workspace-pane-order-preferences";
+import { deleteWorkspacePaneOrderPreference } from "./workspace-pane-order-preferences";
 import {
   buildCopyResumeCommandText,
   buildDetachedResumeAction,
@@ -262,7 +257,6 @@ import {
   SECONDARY_SESSIONS_CONTAINER_ID,
   SHOW_CLOSE_BUTTON_ON_SESSION_CARDS_SETTING,
   SHOW_HOTKEYS_ON_SESSION_CARDS_SETTING,
-  SHOW_LAST_INTERACTION_TIME_ON_SESSION_CARDS_SETTING,
   SHOW_SIDEBAR_ACTIONS_SETTING,
   SHOW_SIDEBAR_AGENTS_SETTING,
   SHOW_SIDEBAR_BROWSERS_SETTING,
@@ -292,7 +286,6 @@ import {
   getFindPreviousSessionAgentId,
   getFindPreviousSessionPromptTemplate,
   getShowCloseButtonOnSessionCards,
-  getShowLastInteractionTimeOnSessionCards,
   getShowSidebarActions,
   getShowSidebarAgents,
   getShowSidebarBrowsers,
@@ -313,7 +306,6 @@ import {
   getT3ZoomPercent,
   resetT3ZoomPercent,
   resetTerminalFontSize,
-  setShowLastInteractionTimeOnSessionCards,
   setT3ZoomPercent,
   setTerminalFontSize,
   getXtermFrontendScrollback,
@@ -393,7 +385,6 @@ const SIDEBAR_HYDRATE_CONFIGURATION_SETTINGS = [
   RENAME_SESSION_ON_DOUBLE_CLICK_SETTING,
   SHOW_CLOSE_BUTTON_ON_SESSION_CARDS_SETTING,
   SHOW_HOTKEYS_ON_SESSION_CARDS_SETTING,
-  SHOW_LAST_INTERACTION_TIME_ON_SESSION_CARDS_SETTING,
   SHOW_SIDEBAR_ACTIONS_SETTING,
   SHOW_SIDEBAR_AGENTS_SETTING,
   SHOW_SIDEBAR_BROWSERS_SETTING,
@@ -766,8 +757,8 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
           return;
         }
 
-        if (message.type === "syncPaneOrder" || message.type === "syncSessionOrder") {
-          await this.syncWorkspacePaneOrder(message.groupId, message.sessionIds);
+        if (message.type === "syncSessionOrder") {
+          await this.syncSessionOrder(message.groupId, message.sessionIds);
         }
       },
     });
@@ -2714,11 +2705,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     await this.refreshSidebar("hydrate");
   }
 
-  public async toggleShowLastInteractionTimeOnSessionCards(): Promise<void> {
-    await setShowLastInteractionTimeOnSessionCards(!getShowLastInteractionTimeOnSessionCards());
-    await this.refreshSidebar("hydrate");
-  }
-
   public async adjustTerminalFontSize(delta: -1 | 1): Promise<void> {
     await setTerminalFontSize(getTerminalFontSize() + delta);
     await this.refreshWorkspacePanel();
@@ -3365,30 +3351,15 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     }
   }
 
+  /**
+   * CDXC:SessionOrder 2026-07-30-13:01 Explicit sidebar or workspace drags
+   * persist one group order and switch from activity sorting so the chosen pane positions remain stable.
+   */
   public async syncSessionOrder(groupId: string, sessionIds: readonly string[]): Promise<void> {
     const changed = await this.store.syncSessionOrder(groupId, sessionIds);
     if (changed) {
+      await saveSidebarActiveSessionsSortMode(this.context, this.workspaceId, "manual");
       await this.afterStateChange();
-    }
-  }
-
-  public async syncWorkspacePaneOrder(
-    groupId: string,
-    sessionIds: readonly string[],
-  ): Promise<void> {
-    const changed = await syncWorkspacePaneOrderPreference(
-      this.context,
-      this.workspaceId,
-      groupId,
-      sessionIds,
-    );
-    logVSmuxDebug("controller.syncWorkspacePaneOrder", {
-      changed,
-      groupId,
-      requestedSessionIds: [...sessionIds],
-    });
-    if (changed) {
-      await this.refreshWorkspacePanel();
     }
   }
 
@@ -3406,6 +3377,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   ): Promise<void> {
     const changed = await this.store.moveSessionToGroup(sessionId, groupId, targetIndex);
     if (changed) {
+      await saveSidebarActiveSessionsSortMode(this.context, this.workspaceId, "manual");
       await this.afterStateChange();
     }
   }
@@ -3418,10 +3390,23 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   }
 
   public async createGroup(): Promise<void> {
-    const groupId = await this.store.createGroup();
-    if (groupId) {
-      await this.afterStateChange();
+    const worktree = await this.pickGroupWorktree("new group");
+    if (!worktree) {
+      return;
     }
+
+    const groupId = await this.store.createGroup();
+    if (!groupId) {
+      return;
+    }
+
+    if (worktree.path) {
+      await this.store.setGroupWorktree(groupId, worktree.path);
+    }
+    if (worktree.name) {
+      await this.store.renameGroup(groupId, worktree.name);
+    }
+    await this.afterStateChange();
   }
 
   public async createSessionInGroup(groupId: string): Promise<void> {
@@ -3435,58 +3420,74 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       return;
     }
 
+    const worktree = await this.pickGroupWorktree(group.title);
+    if (!worktree) {
+      return;
+    }
+
+    if (await this.store.setGroupWorktree(groupId, worktree.path)) {
+      await this.afterStateChange();
+    }
+  }
+
+  /**
+   * CDXC:GroupWorktrees 2026-07-30-12:22 Group creation and reassignment use
+   * one VS Code worktree picker; group creation uses the selected worktree name
+   * while reassignment keeps the existing editable group title.
+   */
+  private async pickGroupWorktree(
+    groupTitle: string,
+  ): Promise<{ name?: string; path?: string } | undefined> {
     const workspaceRoot = getDefaultWorkspaceCwd();
     const worktrees = await resolveSidebarProjectWorktrees(workspaceRoot);
-    const selected = await vscode.window.showQuickPick(
+    const selected = await vscode.window.showQuickPick<{
+      createWorktree: boolean;
+      description?: string;
+      detail?: string;
+      label: string;
+      name?: string;
+      path?: string;
+    }>(
       [
         {
           createWorktree: true,
           description: "Use VS Code's Git worktree workflow",
           label: "$(add) Create new worktree...",
-          worktreePath: undefined,
         },
         {
           createWorktree: false,
           description: workspaceRoot,
           label: "Workspace root",
-          worktreePath: undefined,
         },
         ...worktrees.map((worktree) => ({
           createWorktree: false,
           description: worktree.branch,
           detail: worktree.directory,
           label: worktree.name,
-          worktreePath: worktree.directory,
+          name: worktree.name,
+          path: worktree.directory,
         })),
       ],
       {
-        placeHolder: `Choose the default directory for ${group.title}`,
+        placeHolder: `Choose the directory for ${groupTitle}`,
       },
     );
     if (!selected) {
       return;
     }
 
-    /**
-     * CDXC:Group-worktrees 2026-07-29-23:20
-     * New worktrees use VS Code's Git workflow so its branch naming, location,
-     * and other Git preferences remain authoritative. VSmux only assigns the result.
-     */
-    let worktreePath = selected.worktreePath;
-    if (selected.createWorktree) {
-      const previousPaths = new Set(worktrees.map((worktree) => worktree.directory));
-      await vscode.commands.executeCommand("git.createWorktree", vscode.Uri.file(workspaceRoot));
-      worktreePath = (await resolveSidebarProjectWorktrees(workspaceRoot)).find(
-        (worktree) => !previousPaths.has(worktree.directory),
-      )?.directory;
-      if (!worktreePath) {
-        return;
-      }
+    if (!selected.createWorktree) {
+      return selected.path ? { name: selected.name, path: selected.path } : {};
     }
 
-    if (await this.store.setGroupWorktree(groupId, worktreePath)) {
-      await this.afterStateChange();
-    }
+    const previousPaths = new Set(worktrees.map((worktree) => worktree.directory));
+    await vscode.commands.executeCommand("git.createWorktree", vscode.Uri.file(workspaceRoot));
+    const createdWorktree = (await resolveSidebarProjectWorktrees(workspaceRoot)).find(
+      (worktree) => !previousPaths.has(worktree.directory),
+    );
+    return createdWorktree
+      ? { name: createdWorktree.name, path: createdWorktree.directory }
+      : undefined;
   }
 
   public async closeGroup(groupId: string): Promise<void> {
@@ -3727,8 +3728,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
         this.setSidebarGitGenerateCommitBodyEnabled(enabled),
       setSidebarGitPrimaryAction: async (action) => this.setSidebarGitPrimaryAction(action),
       toggleActiveSessionsSortMode: async () => this.toggleActiveSessionsSortMode(),
-      toggleShowLastInteractionTimeOnSessionCards: async () =>
-        this.toggleShowLastInteractionTimeOnSessionCards(),
       setViewMode: async (viewMode) => this.setViewMode(viewMode),
       setVisibleCount: async (visibleCount) => this.setVisibleCount(visibleCount),
       syncSidebarAgentOrder: async (requestId, agentIds) =>
@@ -4178,7 +4177,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
         getClampedAgentManagerZoomPercent(),
         getShowCloseButtonOnSessionCards(),
         getShowHotkeysOnSessionCards(),
-        getShowLastInteractionTimeOnSessionCards(),
         debuggingMode,
         this.getCompletionBellEnabled(),
         getClampedCompletionSoundSetting(),
@@ -7460,20 +7458,13 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     const activeGroupSessionIdSet = new Set(
       activeSnapshot.sessions.map((session) => session.sessionId),
     );
-    const activeGroupSessions = sortWorkspacePaneSessionRecords(
-      projectedWorkspacePaneSessions.filter((sessionRecord) =>
-        activeGroupSessionIdSet.has(sessionRecord.sessionId),
-      ),
-      getWorkspacePaneOrderPreference(
-        this.context,
-        this.workspaceId,
-        workspaceSnapshot.activeGroupId,
-      ),
-    ).concat(
-      projectedWorkspacePaneSessions.filter(
-        (sessionRecord) => !activeGroupSessionIdSet.has(sessionRecord.sessionId),
-      ),
-    );
+    const activeGroupSessions = projectedWorkspacePaneSessions
+      .filter((sessionRecord) => activeGroupSessionIdSet.has(sessionRecord.sessionId))
+      .concat(
+        projectedWorkspacePaneSessions.filter(
+          (sessionRecord) => !activeGroupSessionIdSet.has(sessionRecord.sessionId),
+        ),
+      );
     const visibleSessionIdSet = new Set(activeSnapshot.visibleSessionIds);
     const visibleSlotIndexBySessionId = new Map(
       activeSnapshot.visibleSessionIds.map((sessionId, visibleSlotIndex) => [

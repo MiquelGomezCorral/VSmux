@@ -15,10 +15,16 @@ export function buildVisiblePaneOrderForDrop(
     return undefined;
   }
 
-  const reorderedPaneIds = swapPaneIds(reorderablePaneIds, sourcePaneId, targetPaneId);
-  if (!reorderedPaneIds) {
+  const sourceIndex = reorderablePaneIds.indexOf(sourcePaneId);
+  const targetIndex = reorderablePaneIds.indexOf(targetPaneId);
+  if (sourceIndex < 0 || targetIndex < 0) {
     return undefined;
   }
+
+  const reorderedPaneIds = reorderablePaneIds.filter((paneId) => paneId !== sourcePaneId);
+  const insertionIndex =
+    reorderedPaneIds.indexOf(targetPaneId) + (sourceIndex < targetIndex ? 1 : 0);
+  reorderedPaneIds.splice(insertionIndex, 0, sourcePaneId);
 
   let reorderedIndex = 0;
   return currentVisiblePaneIds.map((paneId) =>
@@ -77,21 +83,4 @@ export function sortVisiblePanesBySlotIndex(
       typeof right.visibleSlotIndex === "number" ? right.visibleSlotIndex : Number.MAX_SAFE_INTEGER;
     return leftSlotIndex - rightSlotIndex;
   });
-}
-
-function swapPaneIds(
-  paneIds: readonly string[],
-  sourcePaneId: string,
-  targetPaneId: string,
-): string[] | undefined {
-  const sourceIndex = paneIds.indexOf(sourcePaneId);
-  const targetIndex = paneIds.indexOf(targetPaneId);
-  if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
-    return undefined;
-  }
-
-  const nextPaneIds = [...paneIds];
-  nextPaneIds[sourceIndex] = targetPaneId;
-  nextPaneIds[targetIndex] = sourcePaneId;
-  return nextPaneIds;
 }

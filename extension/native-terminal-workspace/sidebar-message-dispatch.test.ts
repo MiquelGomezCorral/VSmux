@@ -55,7 +55,6 @@ function createHandlers(): SidebarMessageHandlers {
     setSessionFavorite: vi.fn(async () => undefined),
     setSessionSleeping: vi.fn(async () => undefined),
     toggleActiveSessionsSortMode: vi.fn(async () => undefined),
-    toggleShowLastInteractionTimeOnSessionCards: vi.fn(async () => undefined),
     setViewMode: vi.fn(async () => undefined),
     setVisibleCount: vi.fn(async () => undefined),
     syncGroupOrder: vi.fn(async () => undefined),
@@ -238,19 +237,6 @@ describe("dispatchSidebarMessage", () => {
     );
 
     expect(handlers.toggleActiveSessionsSortMode).toHaveBeenCalledTimes(1);
-  });
-
-  test("should route toggleShowLastInteractionTimeOnSessionCards to the matching handler", async () => {
-    const handlers = createHandlers();
-
-    await dispatchSidebarMessage(
-      {
-        type: "toggleShowLastInteractionTimeOnSessionCards",
-      },
-      handlers,
-    );
-
-    expect(handlers.toggleShowLastInteractionTimeOnSessionCards).toHaveBeenCalledTimes(1);
   });
 
   test("should route openWorkspaceWelcome to the matching handler", async () => {

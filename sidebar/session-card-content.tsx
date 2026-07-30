@@ -1,4 +1,4 @@
-import { IconLoader2, IconWorld, IconX } from "@tabler/icons-react";
+import { IconLoader2, IconTerminal2, IconWorld, IconX } from "@tabler/icons-react";
 import { Tooltip } from "@base-ui/react/tooltip";
 import {
   cloneElement,
@@ -40,13 +40,11 @@ export type SessionCardContentProps = {
   showDebugSessionNumbers: boolean;
   showCloseButton: boolean;
   showHotkeys: boolean;
-  showLastInteractionTime?: boolean;
 };
 
 /**
- * CDXC:SessionCards 2026-07-29-23:44
- * Session cards reveal a full-size destructive close target on hover or focus.
- * The preference can disable it, and the control replaces rather than crowds trailing status.
+ * CDXC:SessionCards 2026-07-30-12:22 Session cards keep elapsed time visible
+ * while their shell or agent icon alone swaps to a close control on hover.
  */
 export function SessionCardContent({
   aliasHeadingRef,
@@ -54,7 +52,6 @@ export function SessionCardContent({
   session,
   showDebugSessionNumbers,
   showCloseButton,
-  showLastInteractionTime = false,
 }: SessionCardContentProps) {
   const { headingText } = getSessionCardTitleTooltip({
     session,
@@ -63,7 +60,6 @@ export function SessionCardContent({
   const hasLastInteractionTime = Boolean(session.lastInteractionAt);
   const showHeaderLoadingSpinner =
     session.isReloading === true || session.isGeneratingFirstPromptTitle === true;
-  const hasHeaderAgentIcon = Boolean(session.agentIcon) || showHeaderLoadingSpinner;
   useRelativeTimeTick(hasLastInteractionTime);
   const lastInteractionLabel =
     hasLastInteractionTime && session.lastInteractionAt
@@ -75,25 +71,7 @@ export function SessionCardContent({
     hasLastInteractionTime && session.lastInteractionAt
       ? { color: getRelativeTimeColor(session.lastInteractionAt) }
       : undefined;
-  const defaultTrailingDisplay =
-    !showLastInteractionTime && hasHeaderAgentIcon
-      ? "icon"
-      : lastInteractionLabel
-        ? "time"
-        : "icon";
-  const shouldKeepLoadingIconVisible = showHeaderLoadingSpinner && hasHeaderAgentIcon;
-  const hoverTrailingDisplay = shouldKeepLoadingIconVisible
-    ? "icon"
-    : defaultTrailingDisplay === "icon"
-      ? lastInteractionLabel
-        ? "time"
-        : "icon"
-      : hasHeaderAgentIcon
-        ? "icon"
-        : "time";
-  const shouldShowCloseButton = showCloseButton && Boolean(onClose);
-  const hasSessionHeadTrailing =
-    Boolean(lastInteractionLabel) || hasHeaderAgentIcon || shouldShowCloseButton;
+  const shouldShowCloseButton = showCloseButton && Boolean(onClose) && !showHeaderLoadingSpinner;
 
   return (
     <>
@@ -101,45 +79,39 @@ export function SessionCardContent({
         <div className="session-alias-heading" ref={aliasHeadingRef}>
           {headingText}
         </div>
-        {hasSessionHeadTrailing ? (
-          <div
-            className="session-head-trailing"
-            data-default-trailing-display={defaultTrailingDisplay}
-            data-hover-trailing-display={hoverTrailingDisplay}
-            data-show-close-button={String(shouldShowCloseButton)}
-          >
-            {lastInteractionLabel ? (
-              <div className="session-last-interaction-time" style={lastInteractionStyle}>
-                {lastInteractionLabel}
-              </div>
-            ) : null}
-            {hasHeaderAgentIcon ? (
-              <SessionHeaderAgentIcon
-                agentIcon={session.agentIcon}
-                isFavorite={session.isFavorite}
-                isGeneratingFirstPromptTitle={session.isGeneratingFirstPromptTitle}
-                isReloading={session.isReloading}
-              />
-            ) : null}
-            {shouldShowCloseButton ? (
-              <button
-                aria-label="Close session"
-                className="session-close-button"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onClose?.();
-                }}
-                onMouseDown={(event) => {
-                  event.stopPropagation();
-                }}
-                type="button"
-              >
-                <IconX aria-hidden size={14} stroke={1.8} />
-              </button>
-            ) : null}
-          </div>
-        ) : null}
+        <div
+          className="session-head-trailing"
+          data-show-close-button={String(shouldShowCloseButton)}
+        >
+          {lastInteractionLabel ? (
+            <div className="session-last-interaction-time" style={lastInteractionStyle}>
+              {lastInteractionLabel}
+            </div>
+          ) : null}
+          <SessionHeaderAgentIcon
+            agentIcon={session.agentIcon}
+            isFavorite={session.isFavorite}
+            isGeneratingFirstPromptTitle={session.isGeneratingFirstPromptTitle}
+            isReloading={session.isReloading}
+          />
+          {shouldShowCloseButton ? (
+            <button
+              aria-label="Close session"
+              className="session-close-button"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onClose?.();
+              }}
+              onMouseDown={(event) => {
+                event.stopPropagation();
+              }}
+              type="button"
+            >
+              <IconX aria-hidden size={14} stroke={1.8} />
+            </button>
+          ) : null}
+        </div>
       </div>
     </>
   );
@@ -399,6 +371,17 @@ function SessionHeaderAgentIcon({
   isGeneratingFirstPromptTitle = false,
   isReloading = false,
 }: SessionAgentIconProps) {
+  if (!agentIcon && !isGeneratingFirstPromptTitle && !isReloading) {
+    return (
+      <IconTerminal2
+        aria-hidden
+        className="session-header-agent-tabler-icon"
+        size={14}
+        stroke={1.8}
+      />
+    );
+  }
+
   return (
     <SessionAgentIconDecoration
       agentIcon={agentIcon}

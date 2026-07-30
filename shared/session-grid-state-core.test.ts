@@ -343,7 +343,6 @@ describe("sidebar HUD state", () => {
       95,
       false,
       false,
-      true,
       false,
       true,
       "glass",
@@ -367,7 +366,6 @@ describe("sidebar HUD state", () => {
     expect(hud.renameSessionOnDoubleClick).toBe(false);
     expect(hud.showCloseButtonOnSessionCards).toBe(false);
     expect(hud.showHotkeysOnSessionCards).toBe(false);
-    expect(hud.showLastInteractionTimeOnSessionCards).toBe(true);
     expect(hud.isFocusModeActive).toBe(false);
   });
 
@@ -378,7 +376,6 @@ describe("sidebar HUD state", () => {
       100,
       false,
       false,
-      true,
       false,
       false,
       "ping",
@@ -402,7 +399,6 @@ describe("sidebar HUD state", () => {
       100,
       false,
       false,
-      true,
       false,
       false,
       "ping",
@@ -434,7 +430,6 @@ describe("sidebar HUD state", () => {
       100,
       false,
       false,
-      true,
       false,
       false,
       "ping",
