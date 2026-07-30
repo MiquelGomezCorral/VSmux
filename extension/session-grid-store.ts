@@ -306,8 +306,8 @@ export class SessionGridStore {
     return false;
   }
 
-  public async setVisibleCount(visibleCount: VisibleSessionCount): Promise<void> {
-    this.snapshot = setVisibleCountInSimpleWorkspace(this.snapshot, visibleCount);
+  public async setVisibleCount(visibleCount: VisibleSessionCount, groupId?: string): Promise<void> {
+    this.snapshot = setVisibleCountInSimpleWorkspace(this.snapshot, visibleCount, groupId);
     await this.persist();
   }
 
@@ -316,8 +316,8 @@ export class SessionGridStore {
     await this.persist();
   }
 
-  public async setViewMode(viewMode: TerminalViewMode): Promise<void> {
-    this.snapshot = setViewModeInSimpleWorkspace(this.snapshot, viewMode);
+  public async setViewMode(viewMode: TerminalViewMode, groupId?: string): Promise<void> {
+    this.snapshot = setViewModeInSimpleWorkspace(this.snapshot, viewMode, groupId);
     await this.persist();
   }
 

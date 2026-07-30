@@ -2597,8 +2597,8 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     await this.afterStateChange();
   }
 
-  public async setVisibleCount(visibleCount: VisibleSessionCount): Promise<void> {
-    await this.store.setVisibleCount(visibleCount);
+  public async setVisibleCount(visibleCount: VisibleSessionCount, groupId?: string): Promise<void> {
+    await this.store.setVisibleCount(visibleCount, groupId);
     await this.afterStateChange();
   }
 
@@ -2607,8 +2607,8 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     await this.afterStateChange();
   }
 
-  public async setViewMode(viewMode: TerminalViewMode): Promise<void> {
-    await this.store.setViewMode(viewMode);
+  public async setViewMode(viewMode: TerminalViewMode, groupId?: string): Promise<void> {
+    await this.store.setViewMode(viewMode, groupId);
     await this.afterStateChange();
   }
 
@@ -3713,8 +3713,8 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       setSidebarGitPrimaryAction: async (action) => this.setSidebarGitPrimaryAction(action),
       toggleActiveSessionsSortMode: async () => this.toggleActiveSessionsSortMode(),
       setCompletionSound: async (sound) => this.setCompletionSound(sound),
-      setViewMode: async (viewMode) => this.setViewMode(viewMode),
-      setVisibleCount: async (visibleCount) => this.setVisibleCount(visibleCount),
+      setViewMode: async (viewMode, groupId) => this.setViewMode(viewMode, groupId),
+      setVisibleCount: async (visibleCount, groupId) => this.setVisibleCount(visibleCount, groupId),
       syncSidebarAgentOrder: async (requestId, agentIds) =>
         this.syncSidebarAgentOrder(requestId, agentIds),
       syncGroupOrder: async (groupIds) => this.syncGroupOrder(groupIds),

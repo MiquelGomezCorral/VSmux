@@ -493,10 +493,12 @@ export type SidebarToExtensionMessage =
       type: "createGroup";
     }
   | {
+      groupId: string;
       type: "setVisibleCount";
       visibleCount: VisibleSessionCount;
     }
   | {
+      groupId: string;
       type: "setViewMode";
       viewMode: TerminalViewMode;
     }

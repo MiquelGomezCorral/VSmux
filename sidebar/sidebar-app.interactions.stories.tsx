@@ -77,7 +77,7 @@ export const ToolbarActions: Story = {
       await userEvent.hover(groupHeader);
       await userEvent.click(canvas.getByRole("button", { name: "Select split count for Group 4" }));
       await userEvent.click(await body.findByRole("menuitem", { name: "Show 2 splits" }));
-      await expectMessage({ type: "setVisibleCount", visibleCount: 2 });
+      await expectMessage({ groupId: "group-4", type: "setVisibleCount", visibleCount: 2 });
     });
 
     await step("keep the split menu available on right click", async () => {
@@ -97,7 +97,7 @@ export const ToolbarActions: Story = {
       await body.findByRole("menuitem", { name: "Show 6 splits" });
       await body.findByRole("menuitem", { name: "Show 9 splits" });
       await userEvent.click(await body.findByRole("menuitem", { name: "Show 4 splits" }));
-      await expectMessage({ type: "setVisibleCount", visibleCount: 4 });
+      await expectMessage({ groupId: "group-4", type: "setVisibleCount", visibleCount: 4 });
     });
 
     await step("change the group layout", async () => {
@@ -110,7 +110,7 @@ export const ToolbarActions: Story = {
       await userEvent.hover(groupHeader);
       await userEvent.click(canvas.getByRole("button", { name: "Select layout for Group 4" }));
       await userEvent.click(await body.findByRole("menuitemradio", { name: "Stacked" }));
-      await expectMessage({ type: "setViewMode", viewMode: "horizontal" });
+      await expectMessage({ groupId: "group-4", type: "setViewMode", viewMode: "horizontal" });
     });
 
     await step("open sidebar settings", async () => {
