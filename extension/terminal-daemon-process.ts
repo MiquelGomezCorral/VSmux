@@ -179,6 +179,12 @@ const stateDir = getStateDirFromArgs();
 const infoFilePath = path.join(stateDir, INFO_FILE_NAME);
 
 const sessions = new Map<string, ManagedSession>();
+/**
+ * CDXC:TerminalSleep 2026-07-31-16:17
+ * Concurrent wake retries share creation while persisted replay loads, ensuring
+ * one session key can never spawn more than one replacement PTY.
+ */
+const pendingSessionCreations = new Map<string, Promise<ManagedSession>>();
 const controlClients = new Set<ControlClient>();
 const pendingSessionAttachmentSockets = new Set<WebSocket>();
 const sessionSocketsBySessionKey = new Map<string, WebSocket>();
@@ -438,17 +444,31 @@ async function handleCreateOrAttachRequest(
     }
     existingSession = sessions.get(sessionKey);
   }
-  const didCreateSession = !existingSession || existingSession.snapshot.status === "exited";
-  const session =
-    existingSession && existingSession.snapshot.status !== "exited"
-      ? existingSession
-      : await createSession(request);
+  let didCreateSession = false;
+  let session: ManagedSession;
+  if (existingSession && existingSession.snapshot.status !== "exited") {
+    session = existingSession;
+  } else {
+    let pendingSessionCreation = pendingSessionCreations.get(sessionKey);
+    if (!pendingSessionCreation) {
+      didCreateSession = true;
+      pendingSessionCreation = createSession(request).then((createdSession) => {
+        sessions.set(sessionKey, createdSession);
+        return createdSession;
+      });
+      pendingSessionCreations.set(sessionKey, pendingSessionCreation);
+      void pendingSessionCreation.then(
+        () => pendingSessionCreations.delete(sessionKey),
+        () => pendingSessionCreations.delete(sessionKey),
+      );
+    }
+    session = await pendingSessionCreation;
+  }
 
   if (session.cols !== request.cols || session.rows !== request.rows) {
     resizeSession(session, request.cols, request.rows, "create-or-attach-request");
   }
 
-  sessions.set(sessionKey, session);
   const snapshot = await buildSnapshot(session, false);
   socket.send(
     JSON.stringify(okResponse(request.requestId, { didCreateSession, session: snapshot })),
