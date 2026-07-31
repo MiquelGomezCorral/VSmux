@@ -1,3 +1,5 @@
+import { SerializeAddon } from "@xterm/addon-serialize";
+import { Terminal as HeadlessTerminal } from "@xterm/headless";
 import { describe, expect, test } from "vite-plus/test";
 import { TerminalDaemonRingBuffer } from "./terminal-daemon-ring-buffer";
 import {
@@ -7,15 +9,18 @@ import {
   splitTerminalReplaySnapshot,
   queuePendingAttachChunk,
   serializeTerminalReplayHistory,
+  trimTerminalReplayHistory,
 } from "./terminal-daemon-replay";
 
 describe("createTerminalReplaySnapshot", () => {
-  test("should return the raw buffered VT stream for session replay", () => {
-    const historyBuffer = new TerminalDaemonRingBuffer(16);
+  test("should retain an active alternate-screen view for session replay", () => {
+    const historyBuffer = new TerminalDaemonRingBuffer(64);
 
-    historyBuffer.write(Buffer.from("\u001b[2Jprompt\r\n"));
+    historyBuffer.write(Buffer.from("\u001b[?1049h\u001b[Hbuild output\r\n"));
 
-    expect(createTerminalReplaySnapshot(historyBuffer)).toEqual(Buffer.from("\u001b[2Jprompt\r\n"));
+    expect(createTerminalReplaySnapshot(historyBuffer)).toEqual(
+      Buffer.from("\u001b[?1049h\u001b[Hbuild output\r\n"),
+    );
   });
 
   test("should skip a wrapped partial utf8 prefix in the binary replay path", () => {
@@ -92,6 +97,27 @@ describe("serializeTerminalReplayHistory", () => {
   });
 });
 
+describe("trimTerminalReplayHistory", () => {
+  test("should preserve a safe tail when persisted scrollback exceeds its cap", () => {
+    expect(trimTerminalReplayHistory("\u001b]0;title\u0007ok", 6)).toBe("ok");
+  });
+});
+
+describe("rendered xterm replay", () => {
+  test("should restore an active alternate-screen view", async () => {
+    const source = new HeadlessTerminal({ allowProposedApi: true, cols: 20, rows: 3 });
+    const serializeAddon = new SerializeAddon();
+    source.loadAddon(serializeAddon);
+    await writeHeadlessTerminal(source, "normal output\r\n\u001b[?1049h\u001b[Hbuild output");
+
+    const restored = new HeadlessTerminal({ allowProposedApi: true, cols: 20, rows: 3 });
+    await writeHeadlessTerminal(restored, serializeAddon.serialize({ excludeModes: true }));
+
+    expect(restored.buffer.active.type).toBe("alternate");
+    expect(restored.buffer.active.getLine(0)?.translateToString(true)).toBe("build output");
+  });
+});
+
 describe("queuePendingAttachChunk", () => {
   test("should ignore chunks that end at or before the replay cursor", () => {
     const pendingAttachQueue = createPendingAttachQueue(5);
@@ -135,3 +161,9 @@ describe("splitTerminalReplaySnapshot", () => {
     expect(splitTerminalReplaySnapshot(Buffer.alloc(0), 3)).toEqual([]);
   });
 });
+
+function writeHeadlessTerminal(terminal: HeadlessTerminal, data: string): Promise<void> {
+  return new Promise((resolve) => {
+    terminal.write(data, resolve);
+  });
+}

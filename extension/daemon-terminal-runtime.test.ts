@@ -119,6 +119,31 @@ describe("DaemonTerminalRuntime", () => {
     expect(firstSocket.sentPayloads).toHaveLength(1);
     expect(secondSocket.sentPayloads).toHaveLength(1);
   });
+
+  test("should send a sleep request to persist terminal state before termination", async () => {
+    const runtime = createRuntime();
+    const socket = new FakeSocket({
+      onSend: (payload, activeSocket) => {
+        const request = JSON.parse(payload) as { requestId: string };
+        queueMicrotask(() => {
+          deliverRuntimeResponse(runtime, activeSocket, {
+            ok: true,
+            requestId: request.requestId,
+            type: "response",
+          });
+        });
+      },
+    });
+    primeRuntimeSocket(runtime, socket);
+
+    await runtime.sleepSession("workspace-1", "session-1");
+
+    expect(JSON.parse(socket.sentPayloads[0] ?? "{}")).toMatchObject({
+      sessionId: "session-1",
+      type: "sleep",
+      workspaceId: "workspace-1",
+    });
+  });
 });
 
 class FakeSocket extends EventEmitter {

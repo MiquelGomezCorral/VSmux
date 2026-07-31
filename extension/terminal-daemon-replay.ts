@@ -72,3 +72,13 @@ export function serializeTerminalReplayHistory(
 ): string {
   return createTerminalReplaySnapshot(historyBuffer, replayCursor).toString("utf8");
 }
+
+export function trimTerminalReplayHistory(history: string, maxBytes: number): string {
+  if (Buffer.byteLength(history, "utf8") <= maxBytes) {
+    return history;
+  }
+
+  const historyBuffer = new TerminalDaemonRingBuffer(maxBytes);
+  historyBuffer.write(Buffer.from(history, "utf8"));
+  return serializeTerminalReplayHistory(historyBuffer);
+}

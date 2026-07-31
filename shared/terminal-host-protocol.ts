@@ -6,7 +6,7 @@ import type { TerminalEngine } from "./session-grid-contract";
  * intentionally reused across extension reloads when the protocol matches, so
  * behavior-only daemon fixes need a version change to replace old processes.
  */
-export const TERMINAL_HOST_PROTOCOL_VERSION = 31;
+export const TERMINAL_HOST_PROTOCOL_VERSION = 32;
 
 export type TerminalSessionStatus = "starting" | "running" | "exited" | "error" | "disconnected";
 
@@ -84,6 +84,20 @@ export type TerminalHostKillRequest = {
   sessionId: string;
 };
 
+/**
+ * CDXC:TerminalSleep 2026-07-31-13:24
+ * Moon sleep ends the managed PTY so it stops work without adding tmux or
+ * platform-specific process suspension. Wake starts a fresh PTY at the saved
+ * directory and replays at most 512 KiB of scrollback; shell memory, jobs,
+ * and in-flight processes cannot survive that boundary.
+ */
+export type TerminalHostSleepRequest = {
+  type: "sleep";
+  requestId: string;
+  workspaceId: string;
+  sessionId: string;
+};
+
 export type TerminalHostAcknowledgeAttentionRequest = {
   type: "acknowledgeAttention";
   workspaceId: string;
@@ -131,6 +145,7 @@ export type TerminalHostRequest =
   | TerminalHostWriteRequest
   | TerminalHostResizeRequest
   | TerminalHostKillRequest
+  | TerminalHostSleepRequest
   | TerminalHostAcknowledgeAttentionRequest
   | TerminalHostListSessionsRequest
   | TerminalHostConfigureRequest

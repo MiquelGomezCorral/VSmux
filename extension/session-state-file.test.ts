@@ -9,7 +9,9 @@ import {
   getPersistedSessionHookDedupMarkerPath,
   readPersistedSessionStateFromFile,
   readPersistedSessionStateSnapshotFromFile,
+  readPersistedTerminalSleepHistory,
   serializePersistedSessionState,
+  writePersistedTerminalSleepHistory,
   writePersistedSessionStateToFile,
 } from "./session-state-file";
 
@@ -28,12 +30,14 @@ describe("deletePersistedSessionStateFile", () => {
       title: "Claude Code",
     });
     await readFile(filePath, "utf8");
+    await writePersistedTerminalSleepHistory(filePath, "prompt\r\noutput\r\n");
 
     await deletePersistedSessionStateFile(filePath);
 
     await expect(readPersistedSessionStateFromFile(filePath)).resolves.toEqual(
       createDefaultPersistedSessionState(),
     );
+    await expect(readPersistedTerminalSleepHistory(filePath)).resolves.toEqual({});
   });
 
   test("should remove any persisted hook dedupe markers for the session", async () => {
@@ -205,5 +209,20 @@ describe("persisted session title normalization", () => {
     expect(serialized).toContain(
       `historyBase64=${Buffer.from("prompt\r\noutput\r\n", "utf8").toString("base64")}`,
     );
+  });
+});
+
+describe("persisted terminal sleep history", () => {
+  test("should preserve the replay and its sleep timestamp outside agent metadata", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vsmux-session-state-"));
+    const filePath = path.join(tempDir, "session-sleep.state");
+
+    await writePersistedTerminalSleepHistory(filePath, "prompt\r\noutput\r\n");
+
+    await expect(readFile(filePath, "utf8")).rejects.toThrow();
+    await expect(readPersistedTerminalSleepHistory(filePath)).resolves.toEqual({
+      frozenAt: expect.any(String),
+      history: "prompt\r\noutput\r\n",
+    });
   });
 });

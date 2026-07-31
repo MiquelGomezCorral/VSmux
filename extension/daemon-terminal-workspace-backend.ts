@@ -28,9 +28,11 @@ import type {
 import {
   deletePersistedShellStateFile,
   deletePersistedSessionStateFile,
+  deletePersistedTerminalSleepHistory,
   getPersistedShellStateFilePath,
   mergePersistedShellState,
   readPersistedSessionStateSnapshotFromFile,
+  readPersistedTerminalSleepHistory,
   updatePersistedSessionStateFile,
   type PersistedSessionState,
 } from "./session-state-file";
@@ -51,7 +53,6 @@ import {
 
 const POLL_INTERVAL_STEPS_MS = [500, 1_000, 2_000] as const;
 const AGENT_STATE_DIR_NAME = "terminal-session-state";
-const MAX_PERSISTED_FROZEN_HISTORY_BYTES = 512 * 1024;
 
 export type DaemonTerminalWorkspaceBackendOptions = {
   context: vscode.ExtensionContext;
@@ -205,7 +206,7 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
   }
 
   public async freezeNonPersistentSessionsForPanelClose(): Promise<void> {
-    await this.freezeNonPersistentSessions({ killSessions: true });
+    await this.freezeNonPersistentSessions();
   }
 
   public async releaseForDeactivation(): Promise<void> {
@@ -223,7 +224,7 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
     );
 
     try {
-      await this.freezeNonPersistentSessions({ killSessions: true });
+      await this.freezeNonPersistentSessions();
       const didConfigure = await this.runtime.configureExisting(idleShutdownTimeoutMs);
       if (!didConfigure) {
         void appendTerminalRestartReproLog(
@@ -340,10 +341,10 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
       workspaceId: this.options.workspaceId,
     });
     const snapshot = createOrAttachResult.session;
-    await this.clearFrozenSessionState(sessionRecord.sessionId);
     this.sessions.set(sessionRecord.sessionId, snapshot);
     this.syncSessionTitle(sessionRecord.sessionId, snapshot.title);
     this.changeSessionsEmitter.fire();
+    await this.clearPersistedSessionRestoreState(sessionRecord.sessionId);
     return {
       didCreateTerminal: createOrAttachResult.didCreateSession,
       snapshot,
@@ -456,6 +457,12 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
     this.changeSessionsEmitter.fire();
   }
 
+  public async sleepSession(sessionId: string): Promise<void> {
+    await this.runtime.sleepSession(this.options.workspaceId, sessionId);
+    this.sessions.delete(sessionId);
+    this.changeSessionsEmitter.fire();
+  }
+
   public async deletePersistedSessionState(sessionId: string): Promise<void> {
     await deletePersistedSessionStateFile(this.getSessionAgentStateFilePath(sessionId));
     this.sessionTitleBySessionId.delete(sessionId);
@@ -495,6 +502,7 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
 
     await this.killSession(sessionRecord.sessionId);
     await deletePersistedShellStateFile(this.getSessionAgentStateFilePath(sessionRecord.sessionId));
+    await this.clearPersistedSessionRestoreState(sessionRecord.sessionId);
     return (await this.createOrAttachSession(sessionRecord)).snapshot;
   }
 
@@ -758,7 +766,7 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
     }
   }
 
-  private async freezeNonPersistentSessions(options: { killSessions: boolean }): Promise<void> {
+  private async freezeNonPersistentSessions(): Promise<void> {
     const targetSessionRecords = [...this.sessionRecordBySessionId.values()].filter(
       (sessionRecord) => !isPersistentTerminalEngine(sessionRecord.terminalEngine),
     );
@@ -766,21 +774,13 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
       return;
     }
 
-    const latestSnapshots = indexWorkspaceTerminalSnapshotsBySessionId(
-      await this.runtime.listSessions(this.options.workspaceId).catch(() => []),
-      this.options.workspaceId,
-    );
-
     for (const sessionRecord of targetSessionRecords) {
-      const liveSnapshot =
-        latestSnapshots.get(sessionRecord.sessionId) ?? this.sessions.get(sessionRecord.sessionId);
-      await this.persistFrozenSessionSnapshot(sessionRecord, liveSnapshot);
-
-      if (options.killSessions && liveSnapshot) {
-        await this.runtime
-          .killExistingSession(this.options.workspaceId, sessionRecord.sessionId)
-          .catch(() => false);
-      }
+      /**
+       * CDXC:TerminalSleep 2026-07-31-13:24
+       * Sleep is idempotent when the daemon no longer has a PTY, so every
+       * managed session is stopped even if a snapshot listing is unavailable.
+       */
+      await this.runtime.sleepSession(this.options.workspaceId, sessionRecord.sessionId);
 
       this.sessions.set(
         sessionRecord.sessionId,
@@ -808,48 +808,43 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
 
   private async readPersistedSessionStateSnapshot(sessionId: string) {
     const sessionStateFilePath = this.getSessionAgentStateFilePath(sessionId);
-    const [sessionState, shellState] = await Promise.all([
+    const [sessionState, shellState, sleepHistory] = await Promise.all([
       readPersistedSessionStateSnapshotFromFile(sessionStateFilePath),
       readPersistedSessionStateSnapshotFromFile(getPersistedShellStateFilePath(sessionStateFilePath)),
+      readPersistedTerminalSleepHistory(sessionStateFilePath),
     ]);
+    const state = mergePersistedShellState(sessionState.state, shellState.state);
     return {
       ...sessionState,
-      state: mergePersistedShellState(sessionState.state, shellState.state),
+      state:
+        sleepHistory.history === undefined
+          ? state
+          : {
+              ...state,
+              frozenAt: sleepHistory.frozenAt,
+              historyBase64: sleepHistory.history
+                ? Buffer.from(sleepHistory.history, "utf8").toString("base64")
+                : undefined,
+            },
     };
   }
 
-  private async clearFrozenSessionState(sessionId: string): Promise<void> {
-    await updatePersistedSessionStateFile(
-      this.getSessionAgentStateFilePath(sessionId),
-      (state) => ({
-        ...state,
-        frozenAt: undefined,
-      }),
-    ).catch(() => undefined);
-  }
+  private async clearPersistedSessionRestoreState(sessionId: string): Promise<void> {
+    const sessionStateFilePath = this.getSessionAgentStateFilePath(sessionId);
+    const persistedState = await readPersistedSessionStateSnapshotFromFile(sessionStateFilePath);
+    await deletePersistedTerminalSleepHistory(sessionStateFilePath);
+    if (
+      persistedState.state.frozenAt === undefined &&
+      persistedState.state.historyBase64 === undefined
+    ) {
+      return;
+    }
 
-  private async persistFrozenSessionSnapshot(
-    sessionRecord: TerminalSessionRecord,
-    snapshot: TerminalSessionSnapshot | undefined,
-  ): Promise<void> {
-    const history = snapshot?.history;
-    const nextHistoryBase64 =
-      typeof history === "string"
-        ? Buffer.from(trimPersistedFrozenHistory(history), "utf8").toString("base64")
-        : undefined;
-    const frozenAt = new Date().toISOString();
-
-    await updatePersistedSessionStateFile(
-      this.getSessionAgentStateFilePath(sessionRecord.sessionId),
-      (state) => ({
-        ...state,
-        agentName: snapshot?.agentName ?? state.agentName,
-        agentStatus: snapshot?.agentStatus ?? state.agentStatus,
-        frozenAt,
-        historyBase64: nextHistoryBase64,
-        title: normalizeTitle(snapshot?.title) ?? state.title,
-      }),
-    ).catch(() => undefined);
+    await updatePersistedSessionStateFile(sessionStateFilePath, (state) => ({
+      ...state,
+      frozenAt: undefined,
+      historyBase64: undefined,
+    }));
   }
 
   private syncSessionTitle(sessionId: string, nextTitle: string | undefined): string | undefined {
@@ -967,17 +962,6 @@ export function applyPersistedSessionStateToDisconnectedSnapshot(
     isShellPromptIdle: persistedState.isShellPromptIdle,
     title: persistedState.title,
   };
-}
-
-function trimPersistedFrozenHistory(history: string): string {
-  const historyBuffer = Buffer.from(history, "utf8");
-  if (historyBuffer.byteLength <= MAX_PERSISTED_FROZEN_HISTORY_BYTES) {
-    return history;
-  }
-
-  return historyBuffer
-    .subarray(historyBuffer.byteLength - MAX_PERSISTED_FROZEN_HISTORY_BYTES)
-    .toString("utf8");
 }
 
 function describeTerminalSessionPresentationDiff(

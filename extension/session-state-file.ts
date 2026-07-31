@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { getVisibleTerminalTitle } from "../shared/session-grid-contract";
@@ -25,6 +26,11 @@ export type PersistedSessionState = {
 export type PersistedSessionStateSnapshot = {
   state: PersistedSessionState;
   updatedAtMs?: number;
+};
+
+export type PersistedTerminalSleepHistory = {
+  frozenAt?: string;
+  history?: string;
 };
 
 const DEFAULT_PERSISTED_SESSION_STATE: PersistedSessionState = {
@@ -165,6 +171,50 @@ export function getPersistedShellStateFilePath(sessionStateFilePath: string): st
   return `${sessionStateFilePath}.shell`;
 }
 
+export function getPersistedTerminalSleepHistoryFilePath(sessionStateFilePath: string): string {
+  return `${sessionStateFilePath}.sleep-history`;
+}
+
+/**
+ * CDXC:TerminalSleep 2026-07-31-13:24
+ * Moon sleep history is isolated from agent metadata updates so the daemon can
+ * persist the final PTY replay without racing shell or agent state writers.
+ * A missing sidecar is normal; other storage failures must not hide lost output.
+ */
+export async function readPersistedTerminalSleepHistory(
+  sessionStateFilePath: string,
+): Promise<PersistedTerminalSleepHistory> {
+  const historyFilePath = getPersistedTerminalSleepHistoryFilePath(sessionStateFilePath);
+  try {
+    const [history, fileStat] = await Promise.all([
+      readFile(historyFilePath, "utf8"),
+      stat(historyFilePath),
+    ]);
+    return {
+      frozenAt: Number.isFinite(fileStat.mtimeMs) ? new Date(fileStat.mtimeMs).toISOString() : undefined,
+      history,
+    };
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return {};
+    }
+    throw error;
+  }
+}
+
+export async function writePersistedTerminalSleepHistory(
+  sessionStateFilePath: string,
+  history: string,
+): Promise<void> {
+  await writePersistedFile(getPersistedTerminalSleepHistoryFilePath(sessionStateFilePath), history);
+}
+
+export async function deletePersistedTerminalSleepHistory(
+  sessionStateFilePath: string,
+): Promise<void> {
+  await rm(getPersistedTerminalSleepHistoryFilePath(sessionStateFilePath), { force: true });
+}
+
 /**
  * CDXC:Terminal-cwd 2026-07-29-23:07
  * Restarted terminals retain their session metadata but must discard the prior
@@ -217,11 +267,19 @@ export async function writePersistedSessionStateToFile(
   filePath: string,
   state: PersistedSessionState,
 ): Promise<void> {
+  await writePersistedFile(filePath, serializePersistedSessionState(state));
+}
+
+async function writePersistedFile(filePath: string, contents: string | Uint8Array): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
 
-  const tempFilePath = `${filePath}.tmp.${process.pid}`;
-  await writeFile(tempFilePath, serializePersistedSessionState(state), "utf8");
-  await rename(tempFilePath, filePath);
+  const tempFilePath = `${filePath}.tmp.${process.pid}.${randomUUID()}`;
+  try {
+    await writeFile(tempFilePath, contents);
+    await rename(tempFilePath, filePath);
+  } finally {
+    await rm(tempFilePath, { force: true }).catch(() => undefined);
+  }
 }
 
 export function getPersistedSessionHookDedupMarkerPath(
@@ -279,6 +337,7 @@ export async function deletePersistedSessionStateFile(filePath: string): Promise
   await Promise.all([
     rm(filePath, { force: true }).catch(() => undefined),
     deletePersistedShellStateFile(filePath).catch(() => undefined),
+    deletePersistedTerminalSleepHistory(filePath).catch(() => undefined),
   ]);
   await cleanupPersistedSessionHookDedupMarkers(filePath).catch(() => undefined);
 }

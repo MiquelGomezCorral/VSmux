@@ -17,12 +17,15 @@ import {
   type PendingAttachQueue,
   queuePendingAttachChunk,
   serializeTerminalReplayHistory,
+  trimTerminalReplayHistory,
 } from "./terminal-daemon-replay";
 import {
   getPersistedShellStateFilePath,
+  readPersistedTerminalSleepHistory,
   readPersistedSessionStateFromFile,
   readPersistedSessionStateSnapshotFromFile,
   updatePersistedSessionStateFile,
+  writePersistedTerminalSleepHistory,
   type PersistedSessionStateSnapshot,
 } from "./session-state-file";
 import { isGenericAgentSessionTitle } from "./first-prompt-session-title";
@@ -63,6 +66,7 @@ import type {
   TerminalHostListSessionsRequest,
   TerminalHostRequest,
   TerminalHostResponse,
+  TerminalHostSleepRequest,
   TerminalHostSessionStateEvent,
   TerminalHostSyncResizeEligibleSessionsRequest,
   TerminalHostSyncSessionLeasesRequest,
@@ -99,20 +103,35 @@ type ManagedSession = {
   claudeDoneRunningMarkerIgnoreUntil?: number;
   cols: number;
   cwd: string;
+  exitPromise: Promise<void>;
   frontendAttachmentGeneration: number;
+  hasRestoredSleepHistory: boolean;
   headlessTerminal?: HeadlessTerminal;
   historyBuffer: TerminalDaemonRingBuffer;
   liveTitle?: string;
   lastKnownPersistedTitle?: string;
   lastShellInputAtMs?: number;
+  /**
+   * CDXC:TerminalSleep 2026-07-31-13:24
+   * Once moon sleep starts, the saved replay is authoritative; ignore frontend
+   * events so no input is accepted after the terminal has begun stopping.
+   */
+  isStopping: boolean;
   pendingAttachQueues: PendingAttachQueue[];
   serializeAddon?: SerializeAddon;
+  /**
+   * CDXC:TerminalSleep 2026-07-31-13:24
+   * Create/attach waits for an active sleep so wake never reuses a PTY that is
+   * about to be killed.
+   */
+  sleepPromise?: Promise<void>;
   terminalEngine: TerminalEngine;
   titleActivity?: TitleDerivedSessionActivity;
   titleActivityTimer?: NodeJS.Timeout;
   titleCarryover: string;
   pty: PtyProcess;
   rows: number;
+  resolveExit: () => void;
   sessionId: string;
   sessionKey: string;
   sessionStateFilePath: string;
@@ -144,6 +163,12 @@ const DEFAULT_IDLE_SHUTDOWN_TIMEOUT_MS = 5 * 60_000;
 const DAEMON_OWNER_HEARTBEAT_TIMEOUT_MS = 20_000;
 const DAEMON_OWNER_STARTUP_GRACE_MS = 30_000;
 const MAX_HISTORY_BYTES = 8 * 1024 * 1024;
+/**
+ * CDXC:TerminalSleep 2026-07-31-13:24
+ * Moon wake replays the most recent 512 KiB of terminal output, independent
+ * of the user-configured xterm line scrollback.
+ */
+const MAX_PERSISTED_TERMINAL_HISTORY_BYTES = 512 * 1024;
 const SESSION_ATTACH_READY_TIMEOUT_MS = 15_000;
 const REPLAY_CHUNK_BYTES = 128 * 1024;
 const MAX_XTERM_HEADLESS_SCROLLBACK = 100_000;
@@ -318,6 +343,9 @@ async function handleControlMessage(client: ControlClient, rawMessage: string): 
       case "kill":
         await handleKillRequest(client.socket, request);
         return;
+      case "sleep":
+        await handleSleepRequest(client.socket, request);
+        return;
       case "acknowledgeAttention":
         await handleAcknowledgeAttentionRequest(client.socket, request);
         return;
@@ -398,7 +426,18 @@ async function handleCreateOrAttachRequest(
   request: TerminalHostCreateOrAttachRequest,
 ): Promise<void> {
   const sessionKey = createTerminalDaemonSessionKey(request.workspaceId, request.sessionId);
-  const existingSession = sessions.get(sessionKey);
+  let existingSession = sessions.get(sessionKey);
+  if (existingSession?.sleepPromise) {
+    try {
+      await existingSession.sleepPromise;
+    } catch {
+      /**
+       * CDXC:TerminalSleep 2026-07-31-13:24
+       * The original sleep request reports failure; reuse the live PTY.
+       */
+    }
+    existingSession = sessions.get(sessionKey);
+  }
   const didCreateSession = !existingSession || existingSession.snapshot.status === "exited";
   const session =
     existingSession && existingSession.snapshot.status !== "exited"
@@ -436,13 +475,15 @@ async function handleWriteRequest(
   const session = sessions.get(
     createTerminalDaemonSessionKey(request.workspaceId, request.sessionId),
   );
-  if (session) {
+  if (session && !session.isStopping) {
     markSessionShellPromptBusy(session);
     await updatePersistedSessionStateFile(session.sessionStateFilePath, (currentState) => ({
       ...currentState,
       lastActivityAt: new Date().toISOString(),
     })).catch(() => undefined);
-    session.pty.write(request.data);
+    if (!session.isStopping) {
+      session.pty.write(request.data);
+    }
   }
   socket.send(JSON.stringify(okResponse(undefined, undefined, request)));
 }
@@ -454,7 +495,7 @@ async function handleResizeRequest(
   const session = sessions.get(
     createTerminalDaemonSessionKey(request.workspaceId, request.sessionId),
   );
-  if (session) {
+  if (session && !session.isStopping) {
     resizeSession(session, request.cols, request.rows, "control-resize-request");
     const snapshot = await buildSnapshot(session, false);
     broadcastControlSessionState(snapshot);
@@ -469,8 +510,47 @@ async function handleKillRequest(
   const sessionKey = createTerminalDaemonSessionKey(request.workspaceId, request.sessionId);
   const session = sessions.get(sessionKey);
   if (session) {
+    session.isStopping = true;
     session.pty.kill();
     sessions.delete(sessionKey);
+  }
+  socket.send(JSON.stringify(okResponse(request.requestId)));
+}
+
+async function handleSleepRequest(
+  socket: WebSocket,
+  request: TerminalHostSleepRequest,
+): Promise<void> {
+  const sessionKey = createTerminalDaemonSessionKey(request.workspaceId, request.sessionId);
+  const session = sessions.get(sessionKey);
+  if (session) {
+    if (session.sleepPromise) {
+      await session.sleepPromise;
+    } else {
+      session.isStopping = true;
+      session.sleepPromise = (async () => {
+        try {
+          await persistSessionSleepHistory(session);
+          session.pty.kill();
+          await session.exitPromise;
+          /**
+           * CDXC:TerminalSleep 2026-07-31-13:24
+           * Moon restores the visible terminal at the moment sleep begins.
+           * PTY teardown can leave an alternate screen and replace that view
+           * with shell history, so never overwrite the pre-kill replay here.
+           */
+          if (sessions.get(sessionKey) === session) {
+            sessions.delete(sessionKey);
+          }
+        } catch (error) {
+          session.isStopping = false;
+          throw error;
+        } finally {
+          session.sleepPromise = undefined;
+        }
+      })();
+      await session.sleepPromise;
+    }
   }
   socket.send(JSON.stringify(okResponse(request.requestId)));
 }
@@ -501,6 +581,31 @@ async function handleAcknowledgeAttentionRequest(
 async function createSession(request: TerminalHostCreateOrAttachRequest): Promise<ManagedSession> {
   const sessionKey = createTerminalDaemonSessionKey(request.workspaceId, request.sessionId);
   const terminalEngine = normalizeTerminalEngine(request.terminalEngine);
+  const [persistedState, sleepHistory] = await Promise.all([
+    readPersistedSessionStateFromFile(request.sessionStateFilePath),
+    readPersistedTerminalSleepHistory(request.sessionStateFilePath),
+  ]);
+  const restoredHistory =
+    sleepHistory.history ??
+    (typeof persistedState.historyBase64 === "string"
+      ? trimTerminalReplayHistory(
+          Buffer.from(persistedState.historyBase64, "base64").toString("utf8"),
+          MAX_PERSISTED_TERMINAL_HISTORY_BYTES,
+        )
+      : undefined);
+  const xtermState = createXtermSessionState(
+    terminalEngine,
+    request.cols,
+    request.rows,
+    request.xtermHeadlessScrollback,
+  );
+  const historyBuffer = new TerminalDaemonRingBuffer(MAX_HISTORY_BYTES);
+  if (restoredHistory !== undefined) {
+    historyBuffer.write(Buffer.from(restoredHistory, "utf8"));
+    if (xtermState && restoredHistory) {
+      await writeHeadlessTerminal(xtermState.headlessTerminal, restoredHistory);
+    }
+  }
   const environment = createPtyEnvironment(
     request.workspaceId,
     request.sessionId,
@@ -519,23 +624,25 @@ async function createSession(request: TerminalHostCreateOrAttachRequest): Promis
     name: "xterm-256color",
     rows: request.rows,
   });
-  const xtermState = createXtermSessionState(
-    terminalEngine,
-    request.cols,
-    request.rows,
-    request.xtermHeadlessScrollback,
-  );
+  let resolveExit: () => void = () => undefined;
+  const exitPromise = new Promise<void>((resolve) => {
+    resolveExit = resolve;
+  });
 
   const session: ManagedSession = {
     cols: request.cols,
     cwd: request.cwd,
+    exitPromise,
     frontendAttachmentGeneration: 0,
+    hasRestoredSleepHistory: restoredHistory !== undefined,
     headlessTerminal: xtermState?.headlessTerminal,
-    historyBuffer: new TerminalDaemonRingBuffer(MAX_HISTORY_BYTES),
+    historyBuffer,
+    isStopping: false,
     liveTitle: undefined,
     pendingAttachQueues: [],
     pty: spawnedPty,
     rows: request.rows,
+    resolveExit,
     sessionId: request.sessionId,
     sessionKey,
     sessionStateFilePath: request.sessionStateFilePath,
@@ -596,6 +703,7 @@ async function createSession(request: TerminalHostCreateOrAttachRequest): Promis
     void buildSnapshot(session, false).then((snapshot) => {
       broadcastControlSessionState(snapshot);
     });
+    session.resolveExit();
   });
 
   return session;
@@ -723,6 +831,10 @@ async function handleSessionSocketMessage(
   attachment: PendingSessionAttachment,
   rawMessage: string,
 ): Promise<void> {
+  if (session.isStopping) {
+    return;
+  }
+
   if (!rawMessage.trimStart().startsWith("{")) {
     if (attachment.activated) {
       markSessionShellPromptBusy(session);
@@ -1729,6 +1841,10 @@ async function activatePendingSessionAttachment(
   if (attachment.activated || socket.readyState !== WebSocket.OPEN) {
     return;
   }
+  if (session.isStopping) {
+    socket.close();
+    return;
+  }
 
   attachment.activated = true;
   clearPendingSessionAttachmentTimeout(attachment);
@@ -1867,6 +1983,12 @@ function createXtermSessionState(
   };
 }
 
+function writeHeadlessTerminal(terminal: HeadlessTerminal, data: string): Promise<void> {
+  return new Promise((resolve) => {
+    terminal.write(data, resolve);
+  });
+}
+
 function isXtermSession(session: ManagedSession): boolean {
   return session.terminalEngine === "xterm";
 }
@@ -1879,11 +2001,30 @@ function serializeSessionHistory(session: ManagedSession): string {
   return serializeTerminalReplayHistory(session.historyBuffer);
 }
 
+async function persistSessionSleepHistory(session: ManagedSession): Promise<void> {
+  let history = serializeTerminalReplayHistory(session.historyBuffer);
+  if (isXtermSession(session) && session.headlessTerminal && session.serializeAddon) {
+    await writeHeadlessTerminal(session.headlessTerminal, "");
+    const renderedHistory = session.serializeAddon.serialize({ excludeModes: true });
+    if (Buffer.byteLength(renderedHistory, "utf8") <= MAX_PERSISTED_TERMINAL_HISTORY_BYTES) {
+      /**
+       * CDXC:TerminalSleep 2026-07-31-13:24
+       * Moon wake restores xterm's rendered screen rather than replaying control
+       * sequences that can erase or overwrite the output users saw at sleep.
+       */
+      history = renderedHistory;
+    }
+  }
+
+  history = trimTerminalReplayHistory(history, MAX_PERSISTED_TERMINAL_HISTORY_BYTES);
+  await writePersistedTerminalSleepHistory(session.sessionStateFilePath, history);
+}
+
 function createSessionReplayPayloads(
   session: ManagedSession,
   pendingAttachQueue: PendingAttachQueue,
 ): Buffer[] {
-  if (!isXtermSession(session)) {
+  if (session.hasRestoredSleepHistory || !isXtermSession(session)) {
     return createTerminalReplayChunks(
       session.historyBuffer,
       pendingAttachQueue.replayCursor,
