@@ -147,10 +147,24 @@ export function removeSessionInWorkspace(
 export function setVisibleCountInWorkspace(
   snapshot: GroupedSessionWorkspaceSnapshot,
   visibleCount: VisibleSessionCount,
+  groupId?: string,
 ): GroupedSessionWorkspaceSnapshot {
-  return updateActiveGroupSnapshot(snapshot, getActiveGroup, (groupSnapshot) =>
-    setVisibleCountInSnapshot(groupSnapshot, visibleCount),
-  );
+  const normalizedSnapshot = normalizeGroupedSessionWorkspaceSnapshot(snapshot);
+  const targetGroup = groupId
+    ? getGroupById(normalizedSnapshot, groupId)
+    : getActiveGroup(normalizedSnapshot);
+  if (!targetGroup) {
+    return normalizedSnapshot;
+  }
+
+  return {
+    ...normalizedSnapshot,
+    groups: updateGroup(
+      normalizedSnapshot.groups,
+      targetGroup.groupId,
+      setVisibleCountInSnapshot(targetGroup.snapshot, visibleCount),
+    ),
+  };
 }
 
 export function toggleFullscreenSessionInWorkspace(
@@ -164,10 +178,24 @@ export function toggleFullscreenSessionInWorkspace(
 export function setViewModeInWorkspace(
   snapshot: GroupedSessionWorkspaceSnapshot,
   viewMode: TerminalViewMode,
+  groupId?: string,
 ): GroupedSessionWorkspaceSnapshot {
-  return updateActiveGroupSnapshot(snapshot, getActiveGroup, (groupSnapshot) =>
-    setViewModeInSnapshot(groupSnapshot, viewMode),
-  );
+  const normalizedSnapshot = normalizeGroupedSessionWorkspaceSnapshot(snapshot);
+  const targetGroup = groupId
+    ? getGroupById(normalizedSnapshot, groupId)
+    : getActiveGroup(normalizedSnapshot);
+  if (!targetGroup) {
+    return normalizedSnapshot;
+  }
+
+  return {
+    ...normalizedSnapshot,
+    groups: updateGroup(
+      normalizedSnapshot.groups,
+      targetGroup.groupId,
+      setViewModeInSnapshot(targetGroup.snapshot, viewMode),
+    ),
+  };
 }
 
 export function syncSessionOrderInWorkspace(

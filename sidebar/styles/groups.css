@@ -19,7 +19,7 @@
   margin-bottom: var(--sidebar-section-collapsed-spacing);
   max-width: calc(100% - var(--sidebar-session-column-offset));
   overflow: visible;
-  padding: 0 calc(4px * var(--sidebar-density-scale));
+  padding: 0 calc(8px * var(--sidebar-density-scale));
   position: relative;
   transition:
     border-color 140ms ease,
@@ -54,8 +54,7 @@
 .group-head {
   border-radius: calc(10px * var(--sidebar-density-scale));
   min-width: 0;
-  padding-bottom: calc(2px * var(--sidebar-density-scale));
-  padding-top: calc(2px * var(--sidebar-density-scale));
+  padding: calc(4px * var(--sidebar-density-scale)) calc(10px * var(--sidebar-density-scale));
   position: relative;
   transition: background-color 120ms ease;
   z-index: 4;
@@ -198,6 +197,13 @@
   text-transform: uppercase;
 }
 
+.group-title-content {
+  display: grid;
+  gap: calc(3px * var(--sidebar-density-scale));
+  min-width: 0;
+  width: 100%;
+}
+
 .group-title-button {
   background: transparent;
   border: none;
@@ -214,14 +220,14 @@
 
 .group-worktree-title {
   color: color-mix(in srgb, var(--app-muted) 82%, var(--app-foreground) 18%);
-  flex: 0 1 50%;
-  font-size: 0.9em;
+  display: block;
+  font-size: calc(10px * var(--sidebar-density-scale));
   font-weight: 400;
-  letter-spacing: 0.02em;
-  margin-left: auto;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
   min-width: 0;
   overflow: hidden;
-  text-align: right;
+  text-align: left;
   text-overflow: ellipsis;
   text-transform: none;
   white-space: nowrap;
@@ -298,6 +304,7 @@
   flex: none;
   gap: 0;
   margin-left: 0;
+  margin-right: calc(2px * var(--sidebar-density-scale));
   max-width: 0;
   opacity: 0;
   overflow: hidden;
@@ -528,24 +535,26 @@
   padding-top: 0;
 }
 
-.group-head:hover .group-header-actions,
-.group-head:has(:focus-visible) .group-header-actions,
+/* CDXC:SidebarGroups 2026-07-30-15:24 Group headers retain a visible side inset,
+ * and their reveal width includes all fixed-size controls plus the density-scaled action gap. */
+.group:hover .group-header-actions,
+.group:has(:focus-visible) .group-header-actions,
 .group-header-actions[data-open="true"],
 .group[data-active="true"] .group-meta,
 .group:hover .group-meta {
   gap: calc(6px * var(--sidebar-density-scale));
   margin-left: calc(6px * var(--sidebar-density-scale));
-  max-width: calc(84px * var(--sidebar-density-scale));
+  max-width: calc(72px + (6px * var(--sidebar-density-scale)));
   opacity: 1;
   pointer-events: auto;
   transition-delay: 0s;
   visibility: visible;
 }
 
-.group-head:hover .group-add-button,
-.group-head:hover .group-control-button,
-.group-head:has(:focus-visible) .group-add-button,
-.group-head:has(:focus-visible) .group-control-button,
+.group:hover .group-add-button,
+.group:hover .group-control-button,
+.group:has(:focus-visible) .group-add-button,
+.group:has(:focus-visible) .group-control-button,
 .group-header-actions[data-open="true"] .group-add-button,
 .group-header-actions[data-open="true"] .group-control-button {
   opacity: 1;

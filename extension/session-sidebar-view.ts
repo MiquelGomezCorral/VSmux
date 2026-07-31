@@ -503,6 +503,8 @@ export function isSidebarMessage(candidate: unknown): candidate is SidebarToExte
     case "createSession":
     case "openBrowser":
       return true;
+    case "setCompletionSound":
+      return COMPLETION_SOUND_OPTIONS.some((option) => option.value === message.sound);
     case "openT3SessionBrowserAccessLink":
       return typeof message.url === "string" && message.url.length > 0;
     case "adjustTerminalFontSize":
@@ -648,12 +650,16 @@ export function isSidebarMessage(candidate: unknown): candidate is SidebarToExte
 
     case "setVisibleCount":
       return (
+        typeof message.groupId === "string" &&
+        message.groupId.length > 0 &&
         typeof message.visibleCount === "number" &&
         [1, 2, 3, 4, 6, 9].includes(message.visibleCount)
       );
 
     case "setViewMode":
       return (
+        typeof message.groupId === "string" &&
+        message.groupId.length > 0 &&
         typeof message.viewMode === "string" &&
         ["horizontal", "vertical", "grid"].includes(message.viewMode)
       );

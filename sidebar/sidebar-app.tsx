@@ -33,6 +33,7 @@ import {
   type ExtensionToSidebarMessage,
   type SidebarCollapsibleSection,
 } from "../shared/session-grid-contract";
+import { COMPLETION_SOUND_OPTIONS, type CompletionSoundSetting } from "../shared/completion-sound";
 import type { SidebarActionType } from "../shared/sidebar-commands";
 import { playCompletionSound, prepareCompletionSoundPlayback } from "./completion-sound-player";
 import { AgentsPanel } from "./agents-panel";
@@ -146,6 +147,17 @@ const DEBUG_BUILD_STAMP_STYLE: CSSProperties = {
   opacity: 0.72,
 };
 
+/**
+ * CDXC:CompletionSound 2026-07-30-15:27 The compact sidebar picker exposes three
+ * single-hit completion sounds; the full catalog remains in VS Code settings.
+ */
+const COMPLETION_SOUND_PICKER_OPTIONS = COMPLETION_SOUND_OPTIONS.filter(
+  (option) =>
+    option.value === "confirmation-001" ||
+    option.value === "confirmation-003" ||
+    option.value === "tone-1",
+);
+
 export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) {
   const [isStartupInteractionBlocked, setIsStartupInteractionBlocked] = useState(true);
   const [agentCreateRequestId] = useState(0);
@@ -215,6 +227,8 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
     browserGroupIds,
     collapsedSections,
     completionBellEnabled,
+    completionSound,
+    completionSoundLabel,
     createSessionOnSidebarDoubleClick,
     debuggingMode,
     groupOrder,
@@ -233,6 +247,8 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
       browserGroupIds: state.browserGroupIds,
       collapsedSections: state.hud.collapsedSections,
       completionBellEnabled: state.hud.completionBellEnabled,
+      completionSound: state.hud.completionSound,
+      completionSoundLabel: state.hud.completionSoundLabel,
       createSessionOnSidebarDoubleClick: state.hud.createSessionOnSidebarDoubleClick,
       debuggingMode: state.hud.debuggingMode,
       groupOrder: state.groupOrder,
@@ -1427,6 +1443,10 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
     vscode.postMessage({ type: "toggleCompletionBell" });
   };
 
+  const setCompletionSound = (sound: CompletionSoundSetting) => {
+    vscode.postMessage({ sound, type: "setCompletionSound" });
+  };
+
   const toggleActiveSessionsSortMode = () => {
     setIsOverflowMenuOpen(false);
     vscode.postMessage({ type: "toggleActiveSessionsSortMode" });
@@ -1465,6 +1485,8 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
 
   const topControlOptions = {
     completionBellEnabled,
+    completionSound,
+    completionSoundLabel,
     browserAccessSessionId,
     isManualActiveSessionsSort,
     isOverflowMenuOpen,
@@ -1494,6 +1516,7 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
     onToggleSessionSearch: toggleSessionSearch,
     onToggleActiveSessionsSortMode: toggleActiveSessionsSortMode,
     onToggleBell: toggleCompletionBell,
+    onCompletionSoundChange: setCompletionSound,
     onToggleMenu: toggleOverflowMenu,
     onToggleScratchPad: openScratchPad,
     overflowMenuPosition,
@@ -1915,6 +1938,8 @@ function getScratchPadMenuLabel(isScratchPadOpen: boolean): string {
 
 type RenderSidebarTopControlsOptions = {
   completionBellEnabled: boolean;
+  completionSound: CompletionSoundSetting;
+  completionSoundLabel: string;
   browserAccessSessionId?: string;
   isManualActiveSessionsSort: boolean;
   isOverflowMenuOpen: boolean;
@@ -1930,6 +1955,7 @@ type RenderSidebarTopControlsOptions = {
   onToggleSessionSearch: () => void;
   onToggleActiveSessionsSortMode: () => void;
   onToggleBell: () => void;
+  onCompletionSoundChange: (sound: CompletionSoundSetting) => void;
   onToggleMenu: (trigger: HTMLElement) => void;
   onToggleScratchPad: () => void;
   overflowMenuPosition?: FloatingMenuPosition;
@@ -1981,7 +2007,7 @@ function renderSidebarTopControls({
       >
         <IconBookmark aria-hidden="true" className="toolbar-tabler-icon" stroke={1.8} />
       </ToolbarIconButton>
-      {renderCompletionBellToolbarButton(options)}
+      {renderCompletionSoundToolbarControls(options)}
     </div>
   );
 }
@@ -2021,41 +2047,77 @@ function renderAgentsHeaderControls({
           >
             <IconBookmark aria-hidden="true" className="toolbar-tabler-icon" stroke={1.8} />
           </ToolbarIconButton>
-          {renderCompletionBellToolbarButton(options)}
+          {renderCompletionSoundToolbarControls(options)}
         </>
       ) : null}
     </div>
   );
 }
 
-function renderCompletionBellToolbarButton({
+function renderCompletionSoundToolbarControls({
   completionBellEnabled,
+  completionSound,
+  completionSoundLabel,
+  onCompletionSoundChange,
   onToggleBell,
-}: Pick<RenderSidebarTopControlsOptions, "completionBellEnabled" | "onToggleBell">) {
+}: Pick<
+  RenderSidebarTopControlsOptions,
+  | "completionBellEnabled"
+  | "completionSound"
+  | "completionSoundLabel"
+  | "onCompletionSoundChange"
+  | "onToggleBell"
+>) {
+  const options = getCompletionSoundPickerOptions(completionSound, completionSoundLabel);
+
   return (
-    <ToolbarIconButton
-      ariaLabel={completionBellEnabled ? "Disable completion sound" : "Enable completion sound"}
-      className={`floating-toolbar-button section-titlebar-action-button completion-bell-toolbar-button${
-        completionBellEnabled ? "" : " completion-bell-toolbar-button-disabled"
-      }`}
-      /*
-       * CDXC:Sidebar-controls 2026-04-25-10:08
-       * The completion bell's enabled state should be communicated by the bell
-       * glyph, not by a selected button background in the compact title controls.
-       */
-      isSelected={false}
-      onClick={() => {
-        onToggleBell();
-      }}
-      tooltip={completionBellEnabled ? "Completion Sound On" : "Completion Sound Off"}
-    >
-      {completionBellEnabled ? (
-        <IconBell aria-hidden="true" className="toolbar-tabler-icon" stroke={1.8} />
-      ) : (
-        <IconBellOff aria-hidden="true" className="toolbar-tabler-icon" stroke={1.8} />
-      )}
-    </ToolbarIconButton>
+    <div className="completion-sound-toolbar-controls">
+      <ToolbarIconButton
+        ariaLabel={completionBellEnabled ? "Disable completion sound" : "Enable completion sound"}
+        className={`floating-toolbar-button section-titlebar-action-button completion-bell-toolbar-button${
+          completionBellEnabled ? "" : " completion-bell-toolbar-button-disabled"
+        }`}
+        /*
+         * CDXC:Sidebar-controls 2026-04-25-10:08
+         * The completion bell's enabled state should be communicated by the bell
+         * glyph, not by a selected button background in the compact title controls.
+         */
+        isSelected={false}
+        onClick={() => {
+          onToggleBell();
+        }}
+        tooltip={completionBellEnabled ? "Completion Sound On" : "Completion Sound Off"}
+      >
+        {completionBellEnabled ? (
+          <IconBell aria-hidden="true" className="toolbar-tabler-icon" stroke={1.8} />
+        ) : (
+          <IconBellOff aria-hidden="true" className="toolbar-tabler-icon" stroke={1.8} />
+        )}
+      </ToolbarIconButton>
+      <select
+        aria-label="Completion sound"
+        className="completion-sound-toolbar-picker"
+        onChange={(event) => onCompletionSoundChange(event.target.value as CompletionSoundSetting)}
+        title={`Completion sound: ${completionSoundLabel}`}
+        value={completionSound}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </div>
   );
+}
+
+function getCompletionSoundPickerOptions(
+  sound: CompletionSoundSetting,
+  label: string,
+): readonly { label: string; value: CompletionSoundSetting }[] {
+  return COMPLETION_SOUND_PICKER_OPTIONS.some((option) => option.value === sound)
+    ? COMPLETION_SOUND_PICKER_OPTIONS
+    : [{ label: `${label} (Settings)`, value: sound }, ...COMPLETION_SOUND_PICKER_OPTIONS];
 }
 
 function renderSearchToolbarButton({

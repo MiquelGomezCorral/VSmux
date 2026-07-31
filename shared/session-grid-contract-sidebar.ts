@@ -324,6 +324,10 @@ export type SidebarToExtensionMessage =
       type: "toggleCompletionBell";
     }
   | {
+      sound: CompletionSoundSetting;
+      type: "setCompletionSound";
+    }
+  | {
       delta: -1 | 1;
       type: "adjustTerminalFontSize";
     }
@@ -489,10 +493,12 @@ export type SidebarToExtensionMessage =
       type: "createGroup";
     }
   | {
+      groupId: string;
       type: "setVisibleCount";
       visibleCount: VisibleSessionCount;
     }
   | {
+      groupId: string;
       type: "setViewMode";
       viewMode: TerminalViewMode;
     }

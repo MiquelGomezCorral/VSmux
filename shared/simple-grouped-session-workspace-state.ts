@@ -540,13 +540,14 @@ export function setT3SessionMetadataInSimpleWorkspace(
 export function setVisibleCountInSimpleWorkspace(
   snapshot: GroupedSessionWorkspaceSnapshot,
   visibleCount: VisibleSessionCount,
+  groupId?: string,
 ): GroupedSessionWorkspaceSnapshot {
-  const activeGroup = getActiveGroup(snapshot);
-  if (!activeGroup) {
+  const targetGroup = groupId ? getGroupById(snapshot, groupId) : getActiveGroup(snapshot);
+  if (!targetGroup) {
     return snapshot;
   }
 
-  return updateGroup(snapshot, activeGroup.groupId, (group) => ({
+  return updateGroup(snapshot, targetGroup.groupId, (group) => ({
     ...group,
     snapshot: normalizeGroupSnapshot({
       ...group.snapshot,
@@ -596,13 +597,14 @@ export function toggleFullscreenSessionInSimpleWorkspace(
 export function setViewModeInSimpleWorkspace(
   snapshot: GroupedSessionWorkspaceSnapshot,
   viewMode: TerminalViewMode,
+  groupId?: string,
 ): GroupedSessionWorkspaceSnapshot {
-  const activeGroup = getActiveGroup(snapshot);
-  if (!activeGroup) {
+  const targetGroup = groupId ? getGroupById(snapshot, groupId) : getActiveGroup(snapshot);
+  if (!targetGroup) {
     return snapshot;
   }
 
-  return updateGroup(snapshot, activeGroup.groupId, (group) => ({
+  return updateGroup(snapshot, targetGroup.groupId, (group) => ({
     ...group,
     snapshot: {
       ...group.snapshot,

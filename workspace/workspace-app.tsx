@@ -1199,6 +1199,13 @@ export const WorkspaceApp: React.FC<WorkspaceAppProps> = ({ messageSource = wind
       return;
     }
 
+    /**
+     * CDXC:AttentionNotifications 2026-07-30-13:50 A T3 iframe focus message
+     * outside automatic focus represents an explicit re-entry, so it acknowledges
+     * the completed-session dot.
+     */
+    requestAcknowledgeSessionAttention(sessionId, "click");
+
     if (isFocused) {
       postWorkspaceDebugLog(activeWorkspaceState?.debuggingMode, "focus.t3IframeFocusIgnored", {
         reason: "alreadyFocused",

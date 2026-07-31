@@ -219,13 +219,17 @@ export function reduceSidebarStoryWorkspace(
     case "setVisibleCount":
       return {
         ...workspace,
-        snapshot: setVisibleCountInWorkspace(workspace.snapshot, message.visibleCount),
+        snapshot: setVisibleCountInWorkspace(
+          workspace.snapshot,
+          message.visibleCount,
+          message.groupId,
+        ),
       };
 
     case "setViewMode":
       return {
         ...workspace,
-        snapshot: setViewModeInWorkspace(workspace.snapshot, message.viewMode),
+        snapshot: setViewModeInWorkspace(workspace.snapshot, message.viewMode, message.groupId),
       };
 
     case "toggleActiveSessionsSortMode":
@@ -235,6 +239,15 @@ export function reduceSidebarStoryWorkspace(
           ...workspace.options,
           activeSessionsSortMode:
             workspace.options.activeSessionsSortMode === "manual" ? "lastActivity" : "manual",
+        },
+      };
+
+    case "setCompletionSound":
+      return {
+        ...workspace,
+        options: {
+          ...workspace.options,
+          completionSound: message.sound,
         },
       };
 
