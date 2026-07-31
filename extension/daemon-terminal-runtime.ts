@@ -17,6 +17,7 @@ import type {
   TerminalHostWriteRequest,
   TerminalHostResizeRequest,
   TerminalHostKillRequest,
+  TerminalHostSleepRequest,
   TerminalSessionSnapshot,
 } from "../shared/terminal-host-protocol";
 import { TERMINAL_HOST_PROTOCOL_VERSION } from "../shared/terminal-host-protocol";
@@ -416,6 +417,17 @@ export class DaemonTerminalRuntime implements vscode.Disposable {
       requestId: this.nextRequestId(),
       sessionId,
       type: "kill",
+      workspaceId,
+    };
+    await this.sendRequest(request);
+  }
+
+  public async sleepSession(workspaceId: string, sessionId: string): Promise<void> {
+    await this.ensureReady();
+    const request: TerminalHostSleepRequest = {
+      requestId: this.nextRequestId(),
+      sessionId,
+      type: "sleep",
       workspaceId,
     };
     await this.sendRequest(request);

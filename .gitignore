@@ -25,3 +25,4 @@ docs/*
 .publish-tokens.local
 PUBLISHING.md
 .vsmux/
+.vsmux-daemon/

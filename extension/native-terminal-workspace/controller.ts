@@ -2204,15 +2204,13 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       return;
     }
 
-    const changed = await this.store.setSessionSleeping(sessionId, sleeping);
-    if (!changed) {
+    if (sleeping) {
+      await this.sleepSessions([sessionRecord]);
       return;
     }
 
-    if (sleeping) {
-      await this.disposeSleepingSessionSurface(sessionRecord);
-      await this.refreshSidebarFromCurrentState();
-      await this.afterStateChange({ sidebarAlreadyRefreshed: true });
+    const changed = await this.store.setSessionSleeping(sessionId, false);
+    if (!changed) {
       return;
     }
 
@@ -2257,17 +2255,13 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
             ),
         )
       : [];
-    const changed = await this.store.setGroupSleeping(
-      groupId,
-      sleeping,
-      sleeping ? sessionsToSleep.map((sessionRecord) => sessionRecord.sessionId) : undefined,
-    );
-    if (!changed) {
+    if (sleeping) {
+      await this.sleepSessions(sessionsToSleep);
       return;
     }
 
-    if (sleeping) {
-      await this.finalizeSessionsSleeping(sessionsToSleep);
+    const changed = await this.store.setGroupSleeping(groupId, false);
+    if (!changed) {
       return;
     }
 
@@ -4888,14 +4882,21 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       }
 
       /**
-       * CDXC:Terminal-cwd 2026-07-29-23:07
-       * Reattached sessions use their owning group's worktree, not whichever
-       * group happens to be active while reconciliation runs.
+       * CDXC:Terminal-cwd 2026-07-31-13:24
+       * A terminal recreated after moon sleep starts in its shell's last
+       * reported directory. If that directory was removed, fall back to its
+       * owning group's worktree rather than whichever group is active.
        */
-      const cwd = await this.resolveTerminalCreationCwd(
+      const persistedCwd = (
+        await this.backend.readPersistedSessionState(sessionRecord.sessionId)
+      ).cwd?.trim();
+      const groupCwd =
         this.store.getSessionGroup(sessionRecord.sessionId)?.worktreePath?.trim() ||
-          getDefaultWorkspaceCwd(),
-      );
+        getDefaultWorkspaceCwd();
+      const restoredCwd = persistedCwd
+        ? await this.resolveTerminalCreationCwd(persistedCwd, false)
+        : undefined;
+      const cwd = restoredCwd ?? (await this.resolveTerminalCreationCwd(groupCwd));
       if (!cwd) {
         return "non-terminal";
       }
@@ -5132,7 +5133,10 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     return sessionRecord;
   }
 
-  private async resolveTerminalCreationCwd(preferredCwd?: string): Promise<string | undefined> {
+  private async resolveTerminalCreationCwd(
+    preferredCwd?: string,
+    showUnavailableError = true,
+  ): Promise<string | undefined> {
     const cwd =
       preferredCwd?.trim() ||
       this.store.getActiveGroup()?.worktreePath?.trim() ||
@@ -5144,9 +5148,11 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
         throw new Error("Not a directory");
       }
     } catch {
-      void vscode.window.showErrorMessage(
-        `VSmux cannot create a terminal because ${cwd} is unavailable.`,
-      );
+      if (showUnavailableError) {
+        void vscode.window.showErrorMessage(
+          `VSmux cannot create a terminal because ${cwd} is unavailable.`,
+        );
+      }
       return undefined;
     }
 
@@ -5389,11 +5395,12 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   }
 
   private async disposeSleepingSessionSurface(sessionRecord: SessionRecord): Promise<void> {
-    await this.disposeSurface(sessionRecord);
     if (sessionRecord.kind !== "terminal") {
+      await this.disposeSurface(sessionRecord);
       return;
     }
 
+    await this.backend.sleepSession(sessionRecord.sessionId);
     this.retireTerminalPaneRuntimeGeneration(sessionRecord.sessionId);
     await this.destroyWorkspaceTerminalRuntimeIfNeeded(sessionRecord);
   }
@@ -6797,31 +6804,25 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   }
 
   private async sleepSessions(sessionRecords: readonly SessionRecord[]): Promise<void> {
-    const changedSessions: SessionRecord[] = [];
-    for (const sessionRecord of sessionRecords) {
-      if (sessionRecord.kind === "browser" || sessionRecord.isSleeping === true) {
-        continue;
+    let didSleep = false;
+    try {
+      for (const sessionRecord of sessionRecords) {
+        if (sessionRecord.kind === "browser" || sessionRecord.isSleeping === true) {
+          continue;
+        }
+
+        await this.disposeSleepingSessionSurface(sessionRecord);
+        const changed = await this.store.setSessionSleeping(sessionRecord.sessionId, true);
+        if (changed) {
+          didSleep = true;
+        }
       }
-
-      const changed = await this.store.setSessionSleeping(sessionRecord.sessionId, true);
-      if (changed) {
-        changedSessions.push(sessionRecord);
+    } finally {
+      if (didSleep) {
+        await this.refreshSidebarFromCurrentState();
+        await this.afterStateChange({ sidebarAlreadyRefreshed: true });
       }
     }
-
-    if (changedSessions.length === 0) {
-      return;
-    }
-
-    await this.finalizeSessionsSleeping(changedSessions);
-  }
-
-  private async finalizeSessionsSleeping(sessionRecords: readonly SessionRecord[]): Promise<void> {
-    for (const sessionRecord of sessionRecords) {
-      await this.disposeSleepingSessionSurface(sessionRecord);
-    }
-    await this.refreshSidebarFromCurrentState();
-    await this.afterStateChange({ sidebarAlreadyRefreshed: true });
   }
 
   private getCompletionBellEnabled(): boolean {
