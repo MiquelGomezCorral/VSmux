@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import * as vscode from "vscode";
@@ -52,6 +53,7 @@ import type {
   ExtensionToWorkspacePanelMessage,
   WorkspacePanelAutoFocusRequest,
   WorkspacePanelHydrateMessage,
+  WorkspacePanelOpenTerminalPathMessage,
   WorkspacePanelSessionStateMessage,
 } from "../../shared/workspace-panel-contract";
 import {
@@ -60,6 +62,11 @@ import {
   type PreparedSidebarGitCommit,
 } from "../git/actions";
 import { getGitStatusDetails, loadSidebarGitState } from "../git/status";
+import {
+  isTerminalWorkspaceSearchTarget,
+  isTrustedTerminalFileUriAuthority,
+  resolveTerminalPathLink,
+} from "../terminal-path-link";
 import {
   getGitTextGenerationSettings,
   hasConfiguredGitTextGenerationProvider,
@@ -614,6 +621,21 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
 
         if (message.type === "readNativeClipboardPayload") {
           await this.readWorkspaceNativeClipboardPayload(message);
+          return;
+        }
+
+        if (message.type === "openExternalUrl") {
+          /**
+           * CDXC:TerminalLinks 2026-07-31-09:22
+           * Cmd/Ctrl-clicked terminal links must use VS Code's external opener;
+           * webview popups are blocked or unreliable in the extension host.
+           */
+          await vscode.env.openExternal(vscode.Uri.parse(message.url));
+          return;
+        }
+
+        if (message.type === "openTerminalPath") {
+          await this.openWorkspaceTerminalPath(message);
           return;
         }
 
@@ -8140,6 +8162,144 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
         files: [],
         text: "",
       });
+    }
+  }
+
+  private async openWorkspaceTerminalPath(
+    input: WorkspacePanelOpenTerminalPathMessage,
+  ): Promise<void> {
+    const sessionRecord = this.store.getSession(input.sessionId);
+    if (!sessionRecord || !isTerminalSession(sessionRecord)) {
+      return;
+    }
+
+    if (input.kind === "search") {
+      await this.openWorkspaceTerminalSearch(input);
+      return;
+    }
+
+    const resource = await this.getWorkspaceTerminalPathUri(input);
+    if (!resource) {
+      void vscode.window.showErrorMessage(`VSmux cannot resolve ${input.path}.`);
+      return;
+    }
+
+    await this.openWorkspaceTerminalResource(resource, input);
+  }
+
+  private async getWorkspaceTerminalPathUri(
+    input: WorkspacePanelOpenTerminalPathMessage,
+  ): Promise<vscode.Uri | undefined> {
+    if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.test(input.path) && !/^file:\/\//iu.test(input.path)) {
+      return undefined;
+    }
+    if (/^file:\/\//iu.test(input.path)) {
+      const uri = vscode.Uri.parse(input.path);
+      if (
+        uri.scheme !== "file" ||
+        !isTrustedTerminalFileUriAuthority(uri.authority, process.platform === "win32")
+      ) {
+        return undefined;
+      }
+      return this.createWorkspaceResourceUri(
+        uri.authority.toLowerCase() === "localhost"
+          ? uri.with({ authority: "" }).fsPath
+          : uri.fsPath,
+      );
+    }
+
+    const needsCwd = !path.isAbsolute(input.path) && !input.path.startsWith("~");
+    const cwd = needsCwd ? await this.getTerminalLinkCwd(input.sessionId) : "";
+    if (needsCwd && !cwd) {
+      return undefined;
+    }
+
+    const resolvedPath = resolveTerminalPathLink(input.path, cwd ?? "", homedir());
+    return resolvedPath ? this.createWorkspaceResourceUri(resolvedPath) : undefined;
+  }
+
+  private async getTerminalLinkCwd(sessionId: string): Promise<string | undefined> {
+    const liveCwd = this.backend.getSessionSnapshot(sessionId)?.cwd.trim();
+    if (liveCwd) {
+      return liveCwd;
+    }
+
+    try {
+      return (await this.backend.readPersistedSessionState(sessionId)).cwd?.trim();
+    } catch {
+      return undefined;
+    }
+  }
+
+  private createWorkspaceResourceUri(filePath: string): vscode.Uri {
+    const workspaceUri = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (workspaceUri && workspaceUri.scheme !== "file") {
+      return workspaceUri.with({ fragment: "", path: filePath, query: "" });
+    }
+
+    return vscode.Uri.file(filePath);
+  }
+
+  private async openWorkspaceTerminalSearch(
+    input: WorkspacePanelOpenTerminalPathMessage,
+  ): Promise<void> {
+    if (!isTerminalWorkspaceSearchTarget(input.path)) {
+      return;
+    }
+
+    const matches = await vscode.workspace.findFiles(`**/${input.path}`, undefined, 2);
+    if (matches.length === 0) {
+      void vscode.window.showErrorMessage(`VSmux cannot find ${input.path} in this workspace.`);
+      return;
+    }
+
+    if (matches.length === 1) {
+      await this.openWorkspaceTerminalResource(matches[0], input);
+      return;
+    }
+
+    const selected = await vscode.window.showQuickPick(
+      matches.map((uri) => ({ label: vscode.workspace.asRelativePath(uri), uri })),
+      { placeHolder: `Open ${input.path}` },
+    );
+    if (selected) {
+      await this.openWorkspaceTerminalResource(selected.uri, input);
+    }
+  }
+
+  private async openWorkspaceTerminalResource(
+    resource: vscode.Uri,
+    input: WorkspacePanelOpenTerminalPathMessage,
+  ): Promise<void> {
+    try {
+      const stat = await vscode.workspace.fs.stat(resource);
+      if ((stat.type & vscode.FileType.Directory) === vscode.FileType.Directory) {
+        if (input.line !== undefined || input.column !== undefined) {
+          void vscode.window.showErrorMessage(`${input.path} is a directory.`);
+          return;
+        }
+
+        if (vscode.workspace.getWorkspaceFolder(resource)) {
+          await vscode.commands.executeCommand("revealInExplorer", resource);
+          return;
+        }
+
+        await vscode.commands.executeCommand("vscode.openFolder", resource, true);
+        return;
+      }
+
+      const selection =
+        input.line === undefined
+          ? undefined
+          : new vscode.Range(
+              input.line - 1,
+              (input.column ?? 1) - 1,
+              input.line - 1,
+              (input.column ?? 1) - 1,
+            );
+      await vscode.window.showTextDocument(resource, { selection });
+    } catch {
+      void vscode.window.showErrorMessage(`VSmux cannot open ${input.path}.`);
     }
   }
 

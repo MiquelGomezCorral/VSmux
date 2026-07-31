@@ -15,6 +15,10 @@ export type WorkspacePanelConnection = {
   workspaceId: string;
 };
 
+export type WorkspacePanelVscodeApi = {
+  postMessage: (message: WorkspacePanelToExtensionMessage) => void;
+};
+
 export type WorkspacePanelTerminalCursorStyle = "bar" | "block" | "underline";
 
 export type WorkspacePanelTerminalAppearance = {
@@ -294,6 +298,20 @@ export type WorkspacePanelReadNativeClipboardPayloadMessage = {
   type: "readNativeClipboardPayload";
 };
 
+export type WorkspacePanelOpenExternalUrlMessage = {
+  type: "openExternalUrl";
+  url: string;
+};
+
+export type WorkspacePanelOpenTerminalPathMessage = {
+  column?: number;
+  kind: "path" | "search";
+  line?: number;
+  path: string;
+  sessionId: string;
+  type: "openTerminalPath";
+};
+
 export type WorkspacePanelT3ThreadChangedMessage = {
   sessionId: string;
   threadId: string;
@@ -344,6 +362,8 @@ export type WorkspacePanelToExtensionMessage =
   | WorkspacePanelReloadT3SessionMessage
   | WorkspacePanelResolveClipboardImagePathMessage
   | WorkspacePanelReadNativeClipboardPayloadMessage
+  | WorkspacePanelOpenExternalUrlMessage
+  | WorkspacePanelOpenTerminalPathMessage
   | WorkspacePanelT3ThreadChangedMessage
   | WorkspacePanelT3WorkingStartedAtChangedMessage;
 

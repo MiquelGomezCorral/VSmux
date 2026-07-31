@@ -59,6 +59,9 @@ importers:
       '@xterm/addon-web-fonts':
         specifier: 0.2.0-beta.111
         version: 0.2.0-beta.111(@xterm/xterm@6.1.0-beta.197)
+      '@xterm/addon-web-links':
+        specifier: 0.13.0-beta.197
+        version: 0.13.0-beta.197(@xterm/xterm@6.1.0-beta.197)
       '@xterm/addon-webgl':
         specifier: 0.20.0-beta.196
         version: 0.20.0-beta.196(@xterm/xterm@6.1.0-beta.197)
@@ -2099,6 +2102,11 @@ packages:
 
   '@xterm/addon-web-fonts@0.2.0-beta.111':
     resolution: {integrity: sha512-47ItV5iWSlmfg482lp3fWzAgx0fKriqZjOM1THf9z78bpuGgt7NPrJ/5SVwdDTUm79uCHu3wTgjjnn5bxpeJsQ==}
+    peerDependencies:
+      '@xterm/xterm': ^6.1.0-beta.197
+
+  '@xterm/addon-web-links@0.13.0-beta.197':
+    resolution: {integrity: sha512-8MgssTKGYJIgZpemu34KBIsmB0qh/XsQxugOhaYym8qSjn8KAMn9FN0j15W6XwEFQDAu1vtBh1jiKjQfyvHoqQ==}
     peerDependencies:
       '@xterm/xterm': ^6.1.0-beta.197
 
@@ -7278,6 +7286,10 @@ snapshots:
       '@xterm/xterm': 6.1.0-beta.197
 
   '@xterm/addon-web-fonts@0.2.0-beta.111(@xterm/xterm@6.1.0-beta.197)':
+    dependencies:
+      '@xterm/xterm': 6.1.0-beta.197
+
+  '@xterm/addon-web-links@0.13.0-beta.197(@xterm/xterm@6.1.0-beta.197)':
     dependencies:
       '@xterm/xterm': 6.1.0-beta.197
 

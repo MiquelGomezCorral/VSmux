@@ -5,6 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { loadFonts } from "@xterm/addon-web-fonts";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -14,7 +15,9 @@ import type {
   WorkspacePanelConnection,
   WorkspacePanelTerminalAppearance,
   WorkspacePanelTerminalPane,
+  WorkspacePanelVscodeApi,
 } from "../shared/workspace-panel-contract";
+import { isSupportedExternalUrl } from "../shared/external-url";
 import type {
   TerminalInputMessage,
   TerminalReadyMessage,
@@ -28,8 +31,12 @@ import {
 import { TerminalLoadingOverlay } from "./terminal-loading-overlay";
 import {
   getShiftEnterInputSequence,
+  handleTerminalClipboardPaste,
+  TERMINAL_CTRL_V_INPUT_SEQUENCE,
   getWindowsCtrlWordDeleteInputSequence,
 } from "./terminal-input-shortcuts";
+import { isPrimaryTerminalLinkActivation } from "./terminal-links";
+import { TerminalPathLinkProvider, type TerminalPathLink } from "./terminal-path-links";
 import { getTerminalTheme } from "./terminal-theme";
 import {
   createTerminalResizeStabilityState,
@@ -106,6 +113,7 @@ export type XtermTerminalPaneProps = {
   refreshRequestId: number;
   scrollToBottomRequestId?: number;
   terminalAppearance: WorkspacePanelTerminalAppearance;
+  vscode: WorkspacePanelVscodeApi;
 };
 
 type SearchResultsState = {
@@ -210,6 +218,7 @@ export const XtermTerminalPane: React.FC<XtermTerminalPaneProps> = ({
   refreshRequestId,
   scrollToBottomRequestId,
   terminalAppearance,
+  vscode,
 }) => {
   const terminalAppearanceDependencies = getTerminalAppearanceDependencies(terminalAppearance);
   const terminalAppearanceFontLoadKey = getTerminalAppearanceFontLoadKey(
@@ -447,10 +456,58 @@ export const XtermTerminalPane: React.FC<XtermTerminalPaneProps> = ({
       return;
     }
 
+    const openExternalUrl = (url: string) => {
+      if (isSupportedExternalUrl(url)) {
+        vscode.postMessage({ type: "openExternalUrl", url });
+      }
+    };
+    const activateExternalLink = (event: MouseEvent, url: string) => {
+      if (isPrimaryTerminalLinkActivation(event, IS_MAC)) {
+        openExternalUrl(url);
+      }
+    };
+    const openTerminalPath = (link: TerminalPathLink) => {
+      vscode.postMessage({
+        kind: link.kind,
+        path: link.path,
+        sessionId: pane.sessionId,
+        type: "openTerminalPath",
+        ...(link.line === undefined ? {} : { line: link.line }),
+        ...(link.column === undefined ? {} : { column: link.column }),
+      });
+    };
+    const activateTerminalPath = (event: MouseEvent, link: TerminalPathLink) => {
+      if (isPrimaryTerminalLinkActivation(event, IS_MAC)) {
+        openTerminalPath(link);
+      }
+    };
+    const activateOsc8Link = (event: MouseEvent, target: string) => {
+      if (!isPrimaryTerminalLinkActivation(event, IS_MAC)) {
+        return;
+      }
+      if (isSupportedExternalUrl(target)) {
+        openExternalUrl(target);
+        return;
+      }
+      if (target.toLowerCase().startsWith("file://")) {
+        openTerminalPath({
+          end: target.length,
+          kind: "path",
+          path: target,
+          start: 0,
+          text: target,
+        });
+      }
+    };
+
     const terminal = new Terminal({
       allowProposedApi: true,
       altClickMovesCursor: true,
       cursorInactiveStyle: "none",
+      linkHandler: {
+        activate: activateOsc8Link,
+        allowNonHttpProtocols: true,
+      },
       macOptionIsMeta: true,
       scrollbar: {
         showScrollbar: true,
@@ -461,6 +518,20 @@ export const XtermTerminalPane: React.FC<XtermTerminalPaneProps> = ({
       theme: getTerminalTheme(),
     });
     terminalRef.current = terminal;
+    /**
+     * CDXC:TerminalLinks 2026-07-31-11:42
+     * Default xterm panes must preserve full HTTP(S) URLs across terminal wraps.
+     * The maintained addon maps logical buffer lines; VSmux retains Cmd/Ctrl-click
+     * activation and the validated VS Code external opener.
+     */
+    terminal.loadAddon(new WebLinksAddon(activateExternalLink));
+    const terminalPathLinkDisposable = terminal.registerLinkProvider(
+      new TerminalPathLinkProvider({
+        activate: activateTerminalPath,
+        isWindows: IS_WINDOWS,
+        terminal,
+      }),
+    );
 
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
@@ -484,7 +555,6 @@ export const XtermTerminalPane: React.FC<XtermTerminalPaneProps> = ({
     let reconnectLayoutFrame = 0;
     let reconnectSocketTimeoutId: number | undefined;
     let reconnectSocketAttempt = 0;
-    let suppressPasteEvent = false;
     let socketConnectionSequence = 0;
     let socketConnectionId = 0;
     let socketOpenedAtMs: number | undefined;
@@ -612,27 +682,6 @@ export const XtermTerminalPane: React.FC<XtermTerminalPaneProps> = ({
 
       void navigator.clipboard.writeText(selection).catch(() => {});
       return true;
-    };
-
-    /**
-     * CDXC:TerminalPaste 2026-07-29-21:35
-     * Clipboard input must pass through xterm so applications that enable
-     * bracketed paste receive one paste operation instead of typed lines.
-     */
-    const pasteClipboardText = async () => {
-      try {
-        const text = await navigator.clipboard.readText();
-        if (text) {
-          terminal.paste(text);
-        }
-      } catch {
-        // Clipboard access can fail outside a user gesture.
-      }
-    };
-
-    const pasteFromShortcut = () => {
-      suppressPasteEvent = true;
-      void pasteClipboardText();
     };
 
     const clearSocketIdleSummaryTimeout = () => {
@@ -1332,6 +1381,11 @@ export const XtermTerminalPane: React.FC<XtermTerminalPaneProps> = ({
       terminal.write(frozenHistoryReplay);
     }
 
+    /**
+     * CDXC:TerminalPaste 2026-07-31-11:42
+     * Paste shortcuts must not become terminal Ctrl+V input before the browser
+     * dispatches its paste event; xterm's native handler owns text paste there.
+     */
     terminal.attachCustomKeyEventHandler((event) => {
       if (isGeneratingFirstPromptTitleRef.current) {
         return false;
@@ -1385,22 +1439,11 @@ export const XtermTerminalPane: React.FC<XtermTerminalPaneProps> = ({
           return false;
         }
         if (key === "v") {
-          pasteFromShortcut();
           return false;
-        }
-        if (!IS_MAC && event.shiftKey) {
-          if (key === "c" && copySelectionToClipboard()) {
-            return false;
-          }
-          if (key === "v") {
-            pasteFromShortcut();
-            return false;
-          }
         }
       }
 
       if (event.type === "keydown" && event.shiftKey && event.key === "Insert") {
-        pasteFromShortcut();
         return false;
       }
 
@@ -1444,25 +1487,15 @@ export const XtermTerminalPane: React.FC<XtermTerminalPaneProps> = ({
     };
 
     const handlePaste = (event: ClipboardEvent) => {
-      if (suppressPasteEvent) {
-        suppressPasteEvent = false;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        return;
-      }
-
-      const text = event.clipboardData?.getData("text/plain");
-      if (!text || isGeneratingFirstPromptTitleRef.current) {
-        return;
-      }
-
-      terminal.paste(text);
-      event.preventDefault();
-      event.stopImmediatePropagation();
+      handleTerminalClipboardPaste(event, isGeneratingFirstPromptTitleRef.current, () => {
+        sendSocketMessage(
+          createTerminalInputMessage(pane.sessionId, TERMINAL_CTRL_V_INPUT_SEQUENCE),
+        );
+      });
     };
 
-    containerRef.current.addEventListener("copy", handleCopy, true);
-    containerRef.current.addEventListener("paste", handlePaste, true);
+    container.addEventListener("copy", handleCopy, true);
+    container.addEventListener("paste", handlePaste, true);
     const scrollDisposable = terminal.onScroll(() => {
       requestAnimationFrame(() => {
         updateScrollToBottomButtonVisibility();
@@ -1557,8 +1590,9 @@ export const XtermTerminalPane: React.FC<XtermTerminalPaneProps> = ({
       themeObserver.disconnect();
       scrollDisposable.dispose();
       searchResultsDisposable.dispose();
-      containerRef.current?.removeEventListener("copy", handleCopy, true);
-      containerRef.current?.removeEventListener("paste", handlePaste, true);
+      terminalPathLinkDisposable.dispose();
+      container.removeEventListener("copy", handleCopy, true);
+      container.removeEventListener("paste", handlePaste, true);
       streamAttachAddonRef.current?.dispose();
       streamAttachAddonRef.current = null;
       websocket?.close();
@@ -1587,6 +1621,7 @@ export const XtermTerminalPane: React.FC<XtermTerminalPaneProps> = ({
     pane.sessionRecord.terminalEngine,
     shouldConnectLiveSession,
     frozenHistoryReplay,
+    vscode,
     terminalAppearance.xtermFrontendScrollback,
     ...terminalAppearanceDependencies,
   ]);

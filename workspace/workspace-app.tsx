@@ -23,6 +23,7 @@ import type {
   WorkspacePanelShowToastMessage,
   WorkspacePanelT3Appearance,
   WorkspacePanelToExtensionMessage,
+  WorkspacePanelVscodeApi,
 } from "../shared/workspace-panel-contract";
 import {
   getVisiblePrimaryTitle,
@@ -57,9 +58,7 @@ const WORKSPACE_TOOLTIP_DELAY_MS = 550;
 
 export type WorkspaceAppProps = {
   messageSource?: MessageSource;
-  vscode: {
-    postMessage: (message: unknown) => void;
-  };
+  vscode: WorkspacePanelVscodeApi;
 };
 
 type WorkspaceStateMessage = WorkspacePanelHydrateMessage | WorkspacePanelSessionStateMessage;
@@ -1877,6 +1876,7 @@ export const WorkspaceApp: React.FC<WorkspaceAppProps> = ({ messageSource = wind
                   : undefined
               }
               terminalAppearance={workspaceState.terminalAppearance}
+              vscode={vscode}
             />,
             target,
             pane.sessionId,

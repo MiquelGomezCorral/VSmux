@@ -3,6 +3,54 @@ const CTRL_J_SEQUENCE = "\x0a";
 const CTRL_W_SEQUENCE = "\x17";
 const ALT_D_SEQUENCE = "\x1bd";
 
+/**
+ * CDXC:TerminalPaste 2026-07-31-12:14
+ * Normal text must reach xterm's native paste handler so bracketed paste is
+ * preserved. Image-only clipboard data must instead send Ctrl+V to terminal
+ * TUIs; keeping this event decision pure makes that behavior testable outside
+ * a VS Code webview.
+ */
+export const TERMINAL_CTRL_V_INPUT_SEQUENCE = "\x16";
+
+type TerminalClipboardPasteEvent = {
+  clipboardData: {
+    getData: (format: string) => string;
+    items: ArrayLike<Pick<DataTransferItem, "kind" | "type">>;
+  } | null;
+  preventDefault: () => void;
+  stopImmediatePropagation: () => void;
+};
+
+export function shouldDelegateImageOnlyPaste(
+  text: string,
+  clipboardItems: ArrayLike<Pick<DataTransferItem, "kind" | "type">>,
+): boolean {
+  return (
+    text.length === 0 &&
+    Array.from(clipboardItems).some(
+      (item) => item.kind === "file" && item.type.startsWith("image/"),
+    )
+  );
+}
+
+export function handleTerminalClipboardPaste(
+  event: TerminalClipboardPasteEvent,
+  isTerminalInputBlocked: boolean,
+  onImagePaste: () => void,
+): void {
+  const text = event.clipboardData?.getData("text/plain") ?? "";
+  if (
+    isTerminalInputBlocked ||
+    !shouldDelegateImageOnlyPaste(text, event.clipboardData?.items ?? [])
+  ) {
+    return;
+  }
+
+  onImagePaste();
+  event.preventDefault();
+  event.stopImmediatePropagation();
+}
+
 const UNSHIFTED_KEY_BY_CODE: Record<string, string> = {
   Backquote: "`",
   Backslash: "\\",

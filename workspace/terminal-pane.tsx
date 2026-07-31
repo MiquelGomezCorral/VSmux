@@ -7,6 +7,7 @@ import type {
   WorkspacePanelConnection,
   WorkspacePanelTerminalAppearance,
   WorkspacePanelTerminalPane,
+  WorkspacePanelVscodeApi,
 } from "../shared/workspace-panel-contract";
 import { logWorkspaceDebug } from "./workspace-debug";
 import { getResttyFontSources, getResttyTheme } from "./restty-terminal-config";
@@ -84,6 +85,7 @@ export type TerminalPaneProps = {
   refreshRequestId: number;
   scrollToBottomRequestId?: number;
   terminalAppearance: WorkspacePanelTerminalAppearance;
+  vscode: WorkspacePanelVscodeApi;
 };
 
 type SearchResultsState = {
@@ -125,6 +127,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({
   refreshRequestId,
   scrollToBottomRequestId,
   terminalAppearance,
+  vscode,
 }) => {
   if (
     pane.sessionRecord.terminalEngine === "xterm" ||
@@ -146,6 +149,7 @@ export const TerminalPane: React.FC<TerminalPaneProps> = ({
         refreshRequestId={refreshRequestId}
         scrollToBottomRequestId={scrollToBottomRequestId}
         terminalAppearance={terminalAppearance}
+        vscode={vscode}
       />
     );
   }

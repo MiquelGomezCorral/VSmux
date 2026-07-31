@@ -1,11 +1,13 @@
 import * as vscode from "vscode";
 import type {
   ExtensionToWorkspacePanelMessage,
+  WorkspacePanelAutoFocusRequest,
   WorkspacePanelHydrateMessage,
   WorkspacePanelSessionStateMessage,
   WorkspacePanelToExtensionMessage,
 } from "../shared/workspace-panel-contract";
 import { stripWorkspacePanelTransientFields } from "../shared/workspace-panel-contract";
+import { isSupportedExternalUrl } from "../shared/external-url";
 import { getManagedT3WebDistPath } from "./managed-t3-paths";
 import { focusEditorGroupByIndex, getDefaultWorkspaceCwd } from "./terminal-workspace-environment";
 import { logVSmuxDebug } from "./vsmux-debug-log";
@@ -52,9 +54,17 @@ export class WorkspacePanelManager implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private latestMessage: ExtensionToWorkspacePanelMessage | undefined;
   private latestRenderableMessage: WorkspaceRenderableMessage | undefined;
+  /**
+   * CDXC:WorkspaceFocus 2026-07-31-12:29
+   * Replacing webview HTML swaps its execution context. Keep a one-shot focus
+   * request only until that fresh context announces ready; it must not enter
+   * the stable state cache and replay on later ready events.
+   */
+  private pendingAutoFocusRequest: WorkspacePanelAutoFocusRequest | undefined;
   private panelFocusContext = false;
   private panel: vscode.WebviewPanel | undefined;
   private renderedConnectionOrigin: string | undefined;
+  private webviewReady = false;
   public constructor(private readonly options: WorkspacePanelOptions) {
     activeWorkspacePanelManager = this;
     this.disposables.push(
@@ -116,7 +126,9 @@ export class WorkspacePanelManager implements vscode.Disposable {
 
     this.panel?.dispose();
     this.panel = undefined;
+    this.pendingAutoFocusRequest = undefined;
     this.renderedConnectionOrigin = undefined;
+    this.webviewReady = false;
     if (activeWorkspacePanelManager === this) {
       activeWorkspacePanelManager = undefined;
     }
@@ -161,7 +173,9 @@ export class WorkspacePanelManager implements vscode.Disposable {
     });
     this.panel?.dispose();
     this.panel = undefined;
+    this.pendingAutoFocusRequest = undefined;
     this.renderedConnectionOrigin = undefined;
+    this.webviewReady = false;
     void this.setWorkspacePanelFocusContext(false);
   }
 
@@ -170,16 +184,24 @@ export class WorkspacePanelManager implements vscode.Disposable {
     if (isWorkspaceRenderableMessage(this.latestMessage)) {
       this.latestRenderableMessage = this.latestMessage;
     }
-    if (
-      this.panel &&
+    const panel = this.panel;
+    const shouldRefreshPanelHtml =
+      panel &&
       isWorkspaceRenderableMessage(message) &&
       this.latestRenderableMessage &&
-      getWorkspaceConnectionOrigin(this.latestRenderableMessage) !== this.renderedConnectionOrigin
+      getWorkspaceConnectionOrigin(this.latestRenderableMessage) !== this.renderedConnectionOrigin;
+    if (
+      isWorkspaceRenderableMessage(message) &&
+      message.autoFocusRequest &&
+      (!panel || !this.webviewReady || shouldRefreshPanelHtml)
     ) {
-      this.assignPanelHtml(this.panel);
+      this.pendingAutoFocusRequest = message.autoFocusRequest;
+    }
+    if (shouldRefreshPanelHtml && panel) {
+      this.assignPanelHtml(panel);
       return;
     }
-    if (!this.panel) {
+    if (!panel) {
       logVSmuxDebug("workspace.panel.postMessageBuffered", {
         messageType: message.type,
       });
@@ -193,12 +215,15 @@ export class WorkspacePanelManager implements vscode.Disposable {
       );
       return;
     }
+    if (!this.webviewReady) {
+      return;
+    }
 
     logVSmuxDebug("workspace.panel.postMessage", {
       messageType: message.type,
-      visible: this.panel.visible,
+      visible: panel.visible,
     });
-    await this.panel.webview.postMessage(message);
+    await panel.webview.postMessage(message);
   }
 
   public isVisible(): boolean {
@@ -314,6 +339,7 @@ export class WorkspacePanelManager implements vscode.Disposable {
         return;
       }
       if (message.type === "ready") {
+        this.webviewReady = true;
         logVSmuxDebug("workspace.panel.ready", {
           hasLatestMessage: this.latestMessage !== undefined,
         });
@@ -393,7 +419,9 @@ export class WorkspacePanelManager implements vscode.Disposable {
       });
       if (this.panel === panel) {
         this.panel = undefined;
+        this.pendingAutoFocusRequest = undefined;
         this.renderedConnectionOrigin = undefined;
+        this.webviewReady = false;
       }
       void this.setWorkspacePanelFocusContext(false);
       void this.options.onDidDispose?.();
@@ -418,7 +446,13 @@ export class WorkspacePanelManager implements vscode.Disposable {
       },
     );
     if (this.latestRenderableMessage) {
-      await webview.postMessage(this.latestRenderableMessage);
+      const autoFocusRequest = this.pendingAutoFocusRequest;
+      this.pendingAutoFocusRequest = undefined;
+      await webview.postMessage(
+        autoFocusRequest
+          ? { ...this.latestRenderableMessage, autoFocusRequest }
+          : this.latestRenderableMessage,
+      );
     }
     if (this.latestMessage && this.latestMessage !== this.latestRenderableMessage) {
       await webview.postMessage(this.latestMessage);
@@ -430,6 +464,7 @@ export class WorkspacePanelManager implements vscode.Disposable {
    * current tunneled daemon origin before its first terminal socket attaches.
    */
   private assignPanelHtml(panel: vscode.WebviewPanel): void {
+    this.webviewReady = false;
     panel.webview.html = getWorkspaceHtml(
       panel.webview,
       this.options.context.extensionUri,
@@ -693,6 +728,22 @@ function isWorkspaceMessage(candidate: unknown): candidate is WorkspacePanelToEx
       message.sessionId.length > 0
     );
   }
+  if (message.type === "openExternalUrl") {
+    return typeof message.url === "string" && isSupportedExternalUrl(message.url);
+  }
+  if (message.type === "openTerminalPath") {
+    return (
+      typeof message.sessionId === "string" &&
+      message.sessionId.length > 0 &&
+      typeof message.path === "string" &&
+      message.path.length > 0 &&
+      message.path.length <= 1_024 &&
+      !hasControlCharacter(message.path) &&
+      (message.kind === "path" || message.kind === "search") &&
+      (message.line === undefined || isPositiveInteger(message.line)) &&
+      (message.column === undefined || isPositiveInteger(message.column))
+    );
+  }
   if (message.type === "completeWelcome") {
     return true;
   }
@@ -758,6 +809,17 @@ function isWorkspaceMessage(candidate: unknown): candidate is WorkspacePanelToEx
   }
 
   return false;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
 }
 
 function getNonce(): string {
