@@ -379,7 +379,6 @@ const execFileAsync = promisify(execFile);
 const SIDEBAR_HYDRATE_CONFIGURATION_SETTINGS = [
   AGENT_MANAGER_ZOOM_SETTING,
   AGENTS_SETTING,
-  COMPLETION_SOUND_SETTING,
   CREATE_SESSION_ON_SIDEBAR_DOUBLE_CLICK_SETTING,
   DEBUGGING_MODE_SETTING,
   DEFAULT_BROWSER_LAUNCH_URL_SETTING,
@@ -2708,6 +2707,11 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   }
 
   public async setCompletionSound(sound: CompletionSoundSetting): Promise<void> {
+    /**
+     * CDXC:CompletionSound 2026-07-31-15:41
+     * The picker only persists its value. The configuration listener owns the
+     * resulting narrow sidebar update and single preview for every effective change.
+     */
     await setCompletionSound(sound);
   }
 
@@ -3832,7 +3836,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       return;
     }
 
-    this.previewSoundSettingsChange(event);
+    this.handleSoundSettingsChange(event);
     await this.backend.syncConfiguration();
     this.restartAutoSleepTimer();
     await this.runAutoSleepPass();
@@ -3857,11 +3861,16 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     await this.refreshSidebar("hydrate", "workspace.onDidChangeConfiguration");
   }
 
-  private previewSoundSettingsChange(event: vscode.ConfigurationChangeEvent): void {
+  private handleSoundSettingsChange(event: vscode.ConfigurationChangeEvent): void {
     if (event.affectsConfiguration(`${SETTINGS_SECTION}.${COMPLETION_SOUND_SETTING}`)) {
       const sound = getClampedCompletionSoundSetting();
       if (sound !== this.lastPreviewedCompletionSoundSetting) {
         this.lastPreviewedCompletionSoundSetting = sound;
+        void this.sidebarProvider.postMessage({
+          revision: ++this.nextSidebarRevision,
+          sound,
+          type: "completionSoundChanged",
+        });
         this.scheduleSettingsSoundPreview(COMPLETION_SOUND_SETTING, sound);
       }
     }

@@ -147,17 +147,6 @@ const DEBUG_BUILD_STAMP_STYLE: CSSProperties = {
   opacity: 0.72,
 };
 
-/**
- * CDXC:CompletionSound 2026-07-30-15:27 The compact sidebar picker exposes three
- * single-hit completion sounds; the full catalog remains in VS Code settings.
- */
-const COMPLETION_SOUND_PICKER_OPTIONS = COMPLETION_SOUND_OPTIONS.filter(
-  (option) =>
-    option.value === "confirmation-001" ||
-    option.value === "confirmation-003" ||
-    option.value === "tone-1",
-);
-
 export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) {
   const [isStartupInteractionBlocked, setIsStartupInteractionBlocked] = useState(true);
   const [agentCreateRequestId] = useState(0);
@@ -213,6 +202,9 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
     (state) => state.applyCommandRunStateClearedMessage,
   );
   const applyCommandRunStateMessage = useSidebarStore((state) => state.applyCommandRunStateMessage);
+  const applyCompletionSoundChangedMessage = useSidebarStore(
+    (state) => state.applyCompletionSoundChangedMessage,
+  );
   const applyOrderSyncResultMessage = useSidebarStore((state) => state.applyOrderSyncResultMessage);
   const applySessionPresentationMessage = useSidebarStore(
     (state) => state.applySessionPresentationMessage,
@@ -415,6 +407,11 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
       void playCompletionSound(event.data.sound, (soundEvent, details) => {
         postSidebarDebugLog(soundEvent, details);
       });
+      return;
+    }
+
+    if (event.data.type === "completionSoundChanged") {
+      applyCompletionSoundChangedMessage(event.data);
       return;
     }
 
@@ -2068,7 +2065,12 @@ function renderCompletionSoundToolbarControls({
   | "onCompletionSoundChange"
   | "onToggleBell"
 >) {
-  const options = getCompletionSoundPickerOptions(completionSound, completionSoundLabel);
+  /**
+   * CDXC:CompletionSound 2026-07-31-14:22
+   * The compact picker renders the shared catalog directly so removed IDs
+   * cannot hide newly available sounds from the completion-sound action.
+   */
+  const options = COMPLETION_SOUND_OPTIONS;
 
   return (
     <div className="completion-sound-toolbar-controls">
@@ -2109,15 +2111,6 @@ function renderCompletionSoundToolbarControls({
       </select>
     </div>
   );
-}
-
-function getCompletionSoundPickerOptions(
-  sound: CompletionSoundSetting,
-  label: string,
-): readonly { label: string; value: CompletionSoundSetting }[] {
-  return COMPLETION_SOUND_PICKER_OPTIONS.some((option) => option.value === sound)
-    ? COMPLETION_SOUND_PICKER_OPTIONS
-    : [{ label: `${label} (Settings)`, value: sound }, ...COMPLETION_SOUND_PICKER_OPTIONS];
 }
 
 function renderSearchToolbarButton({

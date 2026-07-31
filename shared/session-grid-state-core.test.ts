@@ -345,12 +345,12 @@ describe("sidebar HUD state", () => {
       false,
       false,
       true,
-      "glass",
+      "glimmer",
     );
 
     expect(hud.completionBellEnabled).toBe(true);
-    expect(hud.completionSound).toBe("glass");
-    expect(hud.completionSoundLabel).toBe("Glass");
+    expect(hud.completionSound).toBe("glimmer");
+    expect(hud.completionSoundLabel).toBe("Glimmer");
     expect(hud.agentManagerZoomPercent).toBe(95);
     expect(hud.collapsedSections).toEqual({
       actions: false,

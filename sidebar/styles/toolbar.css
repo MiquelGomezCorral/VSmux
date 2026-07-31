@@ -103,8 +103,11 @@
 }
 
 .completion-sound-toolbar-picker {
-  max-width: 76px;
+  box-sizing: border-box;
+  flex: 0 0 76px;
   min-height: 22px;
+  min-width: 0;
+  overflow: hidden;
   padding: 0 3px;
   border: 0;
   border-radius: 5px;
@@ -112,6 +115,9 @@
   color: var(--app-muted);
   cursor: pointer;
   font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 76px;
 }
 
 .completion-sound-toolbar-picker:hover,

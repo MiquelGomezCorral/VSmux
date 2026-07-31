@@ -201,6 +201,18 @@ export type SidebarPlayCompletionSoundMessage = {
   type: "playCompletionSound";
 };
 
+/**
+ * CDXC:CompletionSound 2026-07-31-15:41
+ * An effective completion-sound setting change updates only its selected sound.
+ * The configuration listener sends this narrow message instead of a full hydrate,
+ * preserving the independent bell state.
+ */
+export type SidebarCompletionSoundChangedMessage = {
+  revision: number;
+  sound: CompletionSoundSetting;
+  type: "completionSoundChanged";
+};
+
 export type SidebarOrderSyncKind = "agent" | "command";
 
 export type SidebarOrderSyncResultMessage = {
@@ -309,6 +321,7 @@ export type ExtensionToSidebarMessage =
   | SidebarSessionStateMessage
   | SidebarSessionPresentationChangedMessage
   | SidebarPlayCompletionSoundMessage
+  | SidebarCompletionSoundChangedMessage
   | SidebarOrderSyncResultMessage
   | SidebarCommandRunStateChangedMessage
   | SidebarCommandRunStateClearedMessage

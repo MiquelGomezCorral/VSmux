@@ -307,6 +307,7 @@ body[data-sidebar-theme^="light-"]
 }
 
 .section-titlebar-actions {
+  --section-titlebar-actions-visible-width: calc(140px * var(--sidebar-density-scale));
   align-items: center;
   display: inline-flex;
   flex: none;
@@ -322,7 +323,13 @@ body[data-sidebar-theme^="light-"]
 .stack:has(:focus-visible) .section-titlebar-actions:has(.sidebar-titlebar-controls),
 .section-titlebar-actions:has(.sidebar-titlebar-controls[data-controls-visible="true"]),
 .section-titlebar-actions:has(.sidebar-titlebar-controls[data-menu-open="true"]) {
-  max-width: calc(140px * var(--sidebar-density-scale));
+  max-width: var(--section-titlebar-actions-visible-width);
+}
+
+/* CDXC:CompletionSound 2026-07-31-15:08 The sound picker needs room for its bell,
+ * select, and sibling controls; the default density-scaled strip clips its hit area. */
+.section-titlebar-actions:has(.completion-sound-toolbar-picker) {
+  --section-titlebar-actions-visible-width: 184px;
 }
 
 .section-titlebar-action-button {

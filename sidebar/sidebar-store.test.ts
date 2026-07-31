@@ -19,6 +19,32 @@ describe("sidebar store", () => {
     expect(createInitialSidebarStoreDataState().hud.showCloseButtonOnSessionCards).toBe(true);
   });
 
+  test("should update the selected sound without changing the completion bell", () => {
+    useSidebarStore.setState((state) => ({
+      hud: { ...state.hud, completionBellEnabled: true },
+    }));
+
+    useSidebarStore.getState().applyCompletionSoundChangedMessage({
+      revision: 1,
+      sound: "glimmer",
+      type: "completionSoundChanged",
+    });
+
+    const state = useSidebarStore.getState();
+    expect(state.hud.completionBellEnabled).toBe(true);
+    expect(state.hud.completionSound).toBe("glimmer");
+    expect(state.hud.completionSoundLabel).toBe("Glimmer");
+    expect(state.revision).toBe(1);
+
+    useSidebarStore.getState().applyCompletionSoundChangedMessage({
+      revision: 0,
+      sound: "ping",
+      type: "completionSoundChanged",
+    });
+
+    expect(useSidebarStore.getState().hud.completionSound).toBe("glimmer");
+  });
+
   test("should track the latest order sync result for the matching sidebar section", () => {
     useSidebarStore.getState().applyOrderSyncResultMessage({
       itemIds: ["claude", "codex"],

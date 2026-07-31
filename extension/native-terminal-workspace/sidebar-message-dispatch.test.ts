@@ -240,6 +240,21 @@ describe("dispatchSidebarMessage", () => {
     expect(handlers.toggleActiveSessionsSortMode).toHaveBeenCalledTimes(1);
   });
 
+  test("should route a sound selection without toggling the completion bell", async () => {
+    const handlers = createHandlers();
+
+    await dispatchSidebarMessage(
+      {
+        sound: "glimmer",
+        type: "setCompletionSound",
+      },
+      handlers,
+    );
+
+    expect(handlers.setCompletionSound).toHaveBeenCalledWith("glimmer");
+    expect(handlers.toggleCompletionBell).not.toHaveBeenCalled();
+  });
+
   test("should route openWorkspaceWelcome to the matching handler", async () => {
     const handlers = createHandlers();
 

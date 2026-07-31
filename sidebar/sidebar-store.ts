@@ -11,6 +11,7 @@ import type {
   SidebarCollapsibleSection,
   SidebarCommandRunStateClearedMessage,
   SidebarCommandRunStateChangedMessage,
+  SidebarCompletionSoundChangedMessage,
   SidebarDaemonSessionsStateMessage,
   SidebarHydrateMessage,
   SidebarHudState,
@@ -55,6 +56,7 @@ type SidebarStoreDataState = {
 type SidebarStoreActions = {
   applyCommandRunStateClearedMessage: (message: SidebarCommandRunStateClearedMessage) => void;
   applyCommandRunStateMessage: (message: SidebarCommandRunStateChangedMessage) => void;
+  applyCompletionSoundChangedMessage: (message: SidebarCompletionSoundChangedMessage) => void;
   applyOrderSyncResultMessage: (message: SidebarOrderSyncResultMessage) => void;
   applyLocalFocus: (groupId: string, sessionId: string) => void;
   applySessionPresentationMessage: (message: SidebarSessionPresentationChangedMessage) => void;
@@ -146,6 +148,22 @@ export const useSidebarStore = create<SidebarStoreState>((set) => ({
           ...state.commandRunStates,
           [message.commandId]: nextCommandRunState,
         },
+      };
+    });
+  },
+  applyCompletionSoundChangedMessage: (message) => {
+    set((state) => {
+      if (message.revision < state.revision) {
+        return state;
+      }
+
+      return {
+        hud: {
+          ...state.hud,
+          completionSound: message.sound,
+          completionSoundLabel: getCompletionSoundLabel(message.sound),
+        },
+        revision: message.revision,
       };
     });
   },

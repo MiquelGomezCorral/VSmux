@@ -1,3 +1,8 @@
+/**
+ * CDXC:CompletionSound 2026-07-31-14:22
+ * This catalog defines every supported completion sound. Sidebar controls and
+ * VS Code setting choices must stay aligned when sounds are added or removed.
+ */
 export const COMPLETION_SOUND_OPTIONS = [
   {
     fileName: "ping.mp3",

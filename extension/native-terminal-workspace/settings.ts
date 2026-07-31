@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { DefaultSidebarAgentId } from "../../shared/sidebar-agents";
 import {
+  DEFAULT_COMPLETION_SOUND,
   clampCompletionSoundSetting,
   type CompletionSoundSetting,
 } from "../../shared/completion-sound";
@@ -346,7 +347,7 @@ export function getClampedCompletionSoundSetting(): CompletionSoundSetting {
   const value =
     vscode.workspace
       .getConfiguration(SETTINGS_SECTION)
-      .get<string>(COMPLETION_SOUND_SETTING, "arcade") ?? "arcade";
+      .get<string>(COMPLETION_SOUND_SETTING, DEFAULT_COMPLETION_SOUND) ?? DEFAULT_COMPLETION_SOUND;
   return clampCompletionSoundSetting(value);
 }
 
@@ -372,7 +373,8 @@ export function getClampedActionCompletionSoundSetting(): CompletionSoundSetting
   const value =
     vscode.workspace
       .getConfiguration(SETTINGS_SECTION)
-      .get<string>(ACTION_COMPLETION_SOUND_SETTING, "shamisenreverb") ?? "shamisenreverb";
+      .get<string>(ACTION_COMPLETION_SOUND_SETTING, DEFAULT_COMPLETION_SOUND) ??
+    DEFAULT_COMPLETION_SOUND;
   return clampCompletionSoundSetting(value);
 }
 
