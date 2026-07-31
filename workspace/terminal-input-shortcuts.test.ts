@@ -1,9 +1,12 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   getGhosttyResttyKeyRemap,
   getShiftEnterInputSequence,
+  handleTerminalClipboardPaste,
+  TERMINAL_CTRL_V_INPUT_SEQUENCE,
   getWindowsCtrlWordDeleteInputSequence,
   isWindowsPowerShellShell,
+  shouldDelegateImageOnlyPaste,
 } from "./terminal-input-shortcuts";
 
 describe("terminal input shortcuts", () => {
@@ -242,4 +245,60 @@ describe("terminal input shortcuts", () => {
     expect(getWindowsCtrlWordDeleteInputSequence("Delete")).toBe("\x1bd");
     expect(getWindowsCtrlWordDeleteInputSequence("ArrowLeft")).toBeUndefined();
   });
+
+  test("delegates image-only clipboard data to the CLI", () => {
+    expect(TERMINAL_CTRL_V_INPUT_SEQUENCE).toBe("\x16");
+    expect(shouldDelegateImageOnlyPaste("", [{ kind: "file", type: "image/png" }])).toBe(true);
+    expect(
+      shouldDelegateImageOnlyPaste("image caption", [{ kind: "file", type: "image/png" }]),
+    ).toBe(false);
+    expect(shouldDelegateImageOnlyPaste("", [{ kind: "string", type: "text/plain" }])).toBe(false);
+  });
+
+  test("intercepts image-only paste before xterm handles it", () => {
+    const { event, preventDefault, stopImmediatePropagation } = createClipboardPasteEvent("", [
+      { kind: "file", type: "image/png" },
+    ]);
+    const onImagePaste = vi.fn();
+
+    handleTerminalClipboardPaste(event, false, onImagePaste);
+
+    expect(onImagePaste).toHaveBeenCalledOnce();
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(stopImmediatePropagation).toHaveBeenCalledOnce();
+  });
+
+  test("leaves text paste for xterm's native handler", () => {
+    const { event, preventDefault, stopImmediatePropagation } = createClipboardPasteEvent(
+      "caption",
+      [{ kind: "file", type: "image/png" }],
+    );
+    const onImagePaste = vi.fn();
+
+    handleTerminalClipboardPaste(event, false, onImagePaste);
+
+    expect(onImagePaste).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(stopImmediatePropagation).not.toHaveBeenCalled();
+  });
 });
+
+function createClipboardPasteEvent(
+  text: string,
+  items: ArrayLike<Pick<DataTransferItem, "kind" | "type">>,
+) {
+  const preventDefault = vi.fn();
+  const stopImmediatePropagation = vi.fn();
+  return {
+    event: {
+      clipboardData: {
+        getData: (format: string) => (format === "text/plain" ? text : ""),
+        items,
+      },
+      preventDefault,
+      stopImmediatePropagation,
+    },
+    preventDefault,
+    stopImmediatePropagation,
+  };
+}

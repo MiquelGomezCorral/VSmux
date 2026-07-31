@@ -494,6 +494,120 @@ describe("WorkspacePanelManager", () => {
     manager.dispose();
   });
 
+  test("should forward safe external URL messages from the workspace webview", async () => {
+    const onMessage = vi.fn();
+    const manager = new WorkspacePanelManager({
+      context: createMockContext(),
+      onMessage,
+    });
+
+    await manager.reveal();
+    createdPanels[0]?.webview.messageListeners[0]?.({
+      type: "openExternalUrl",
+      url: "https://example.com/docs",
+    });
+
+    expect(onMessage).toHaveBeenCalledWith({
+      type: "openExternalUrl",
+      url: "https://example.com/docs",
+    });
+
+    manager.dispose();
+  });
+
+  test("should reject unsafe external URL messages from the workspace webview", async () => {
+    const onMessage = vi.fn();
+    const manager = new WorkspacePanelManager({
+      context: createMockContext(),
+      onMessage,
+    });
+
+    await manager.reveal();
+    createdPanels[0]?.webview.messageListeners[0]?.({
+      type: "openExternalUrl",
+      url: "javascript:alert(document.domain)",
+    });
+
+    expect(onMessage).not.toHaveBeenCalled();
+
+    manager.dispose();
+  });
+
+  test("should forward terminal path links from the workspace webview", async () => {
+    const onMessage = vi.fn();
+    const manager = new WorkspacePanelManager({
+      context: createMockContext(),
+      onMessage,
+    });
+
+    await manager.reveal();
+    createdPanels[0]?.webview.messageListeners[0]?.({
+      column: 4,
+      kind: "path",
+      line: 12,
+      path: "/Users/miquelgomezcorral/Documents/Yo/VSmux/workspace/xterm-terminal-pane.tsx",
+      sessionId: "session-1",
+      type: "openTerminalPath",
+    });
+
+    expect(onMessage).toHaveBeenCalledWith({
+      column: 4,
+      kind: "path",
+      line: 12,
+      path: "/Users/miquelgomezcorral/Documents/Yo/VSmux/workspace/xterm-terminal-pane.tsx",
+      sessionId: "session-1",
+      type: "openTerminalPath",
+    });
+
+    manager.dispose();
+  });
+
+  test("should forward terminal filename searches from the workspace webview", async () => {
+    const onMessage = vi.fn();
+    const manager = new WorkspacePanelManager({
+      context: createMockContext(),
+      onMessage,
+    });
+
+    await manager.reveal();
+    createdPanels[0]?.webview.messageListeners[0]?.({
+      kind: "search",
+      path: "main.test.ts",
+      sessionId: "session-1",
+      type: "openTerminalPath",
+    });
+
+    expect(onMessage).toHaveBeenCalledWith({
+      kind: "search",
+      path: "main.test.ts",
+      sessionId: "session-1",
+      type: "openTerminalPath",
+    });
+
+    manager.dispose();
+  });
+
+  test("should reject malformed terminal path links from the workspace webview", async () => {
+    const onMessage = vi.fn();
+    const manager = new WorkspacePanelManager({
+      context: createMockContext(),
+      onMessage,
+    });
+
+    await manager.reveal();
+    createdPanels[0]?.webview.messageListeners[0]?.({
+      kind: "path",
+      line: 0,
+      path: "/tmp/file.ts\nignored",
+      sessionId: "session-1",
+      type: "openTerminalPath",
+    });
+
+    expect(onMessage).not.toHaveBeenCalled();
+
+    manager.dispose();
+  });
+
   test("should forward prompt rename session messages from the workspace webview", async () => {
     const onMessage = vi.fn();
     const manager = new WorkspacePanelManager({
@@ -744,62 +858,29 @@ describe("WorkspacePanelManager", () => {
     manager.dispose();
   });
 
-  test("should not replay one-shot autofocus requests after the initial post", async () => {
+  test("should buffer one-shot autofocus until a new webview is ready without replaying it", async () => {
     const manager = new WorkspacePanelManager({
       context: createMockContext(),
       onMessage: vi.fn(),
     });
 
-    await manager.reveal();
-
-    const panel = createdPanels[0];
-    expect(panel).toBeDefined();
-
     await manager.postMessage({
-      activeGroupId: "group-1",
+      ...createWorkspaceStateMessage(),
       autoFocusRequest: {
         requestId: 3,
         sessionId: "session-1",
         source: "sidebar",
       },
-      connection: {
-        baseUrl: "http://127.0.0.1:8080",
-        token: "token",
-        workspaceId: "workspace-1",
-      },
-      debuggingMode: false,
-      focusedSessionId: "session-1",
-      layoutAppearance: {
-        activePaneBorderColor: "#fff",
-        paneGap: 12,
-      },
-      panes: [],
-      terminalAppearance: {
-        cursorBlink: false,
-        cursorStyle: "bar",
-        fontFamily: "monospace",
-        fontSize: 12,
-        fontWeight: 400,
-        letterSpacing: 0,
-        lineHeight: 1,
-        scrollToBottomWhenTyping: false,
-        xtermFrontendScrollback: 75_000,
-      },
-      t3Appearance: {
-        provider: "t3code",
-        zoomPercent: 100,
-      },
-      type: "sessionState",
-      viewMode: "grid",
-      visibleCount: 1,
-      workspaceSnapshot: {
-        activeGroupId: "group-1",
-        groups: [],
-        nextGroupNumber: 1,
-        nextSessionDisplayId: 1,
-        nextSessionNumber: 1,
-      },
     });
+    await manager.reveal();
+
+    const panel = createdPanels[0];
+    expect(panel).toBeDefined();
+
+    expect(panel.webview.postMessage).not.toHaveBeenCalled();
+
+    panel.webview.messageListeners[0]?.({ type: "ready" });
+    await Promise.resolve();
 
     expect(panel.webview.postMessage).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -812,10 +893,58 @@ describe("WorkspacePanelManager", () => {
     );
 
     panel.webview.messageListeners[0]?.({ type: "ready" });
+    await Promise.resolve();
 
     expect(panel.webview.postMessage).toHaveBeenLastCalledWith(
       expect.not.objectContaining({
         autoFocusRequest: expect.anything(),
+      }),
+    );
+
+    manager.dispose();
+  });
+
+  test("should buffer one-shot autofocus across a connection-origin refresh", async () => {
+    const manager = new WorkspacePanelManager({
+      context: createMockContext(),
+      onMessage: vi.fn(),
+    });
+
+    await manager.postMessage(createWorkspaceStateMessage());
+    await manager.reveal();
+
+    const panel = createdPanels[0];
+    expect(panel).toBeDefined();
+
+    panel.webview.messageListeners[0]?.({ type: "ready" });
+    await Promise.resolve();
+    panel.webview.postMessage.mockClear();
+
+    await manager.postMessage({
+      ...createWorkspaceStateMessage(),
+      autoFocusRequest: {
+        requestId: 4,
+        sessionId: "session-1",
+        source: "sidebar",
+      },
+      connection: {
+        ...createWorkspaceStateMessage().connection,
+        baseUrl: "http://127.0.0.1:8081",
+      },
+    });
+
+    expect(panel.webview.postMessage).not.toHaveBeenCalled();
+
+    panel.webview.messageListeners[0]?.({ type: "ready" });
+    await Promise.resolve();
+
+    expect(panel.webview.postMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        autoFocusRequest: {
+          requestId: 4,
+          sessionId: "session-1",
+          source: "sidebar",
+        },
       }),
     );
 
