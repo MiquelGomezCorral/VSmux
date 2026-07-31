@@ -19,7 +19,8 @@
   margin-bottom: var(--sidebar-section-collapsed-spacing);
   max-width: calc(100% - var(--sidebar-session-column-offset));
   overflow: visible;
-  padding: 0 calc(8px * var(--sidebar-density-scale));
+  /* CDXC:SidebarGroups 2026-07-31-09:22 Keep group cards aligned with the 12px side inset used by other sidebar panels. */
+  padding: 0 calc(12px * var(--sidebar-density-scale));
   position: relative;
   transition:
     border-color 140ms ease,
