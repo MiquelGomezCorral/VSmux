@@ -293,7 +293,13 @@ export function SessionGroupSection({
     sessions: groupSessions,
   });
   const emptyStateLabel = isBrowserGroup ? "No browsers" : "No sessions";
-  const worktreeName = getGroupWorktreeName(group.worktreePath);
+  /**
+   * CDXC:SidebarGroups 2026-07-30-14:49 Every workspace group shows its
+   * worktree beneath the title; the primary workspace is labeled Workspace root.
+   */
+  const worktreeName = isBrowserGroup
+    ? undefined
+    : (getGroupWorktreeName(group.worktreePath) ?? "Workspace root");
   const groupDisplayName = worktreeName ? `${group.title} · ${worktreeName}` : group.title;
 
   useEffect(() => {
@@ -336,14 +342,6 @@ export function SessionGroupSection({
     setContextMenuPosition(undefined);
     setOpenControlMenu(undefined);
   }, [group.groupId, group.title]);
-
-  useEffect(() => {
-    if (group.isActive) {
-      return;
-    }
-
-    setOpenControlMenu(undefined);
-  }, [group.isActive]);
 
   useEffect(() => {
     if (!contextMenuPosition) {
@@ -492,6 +490,11 @@ export function SessionGroupSection({
     });
   };
 
+  /**
+   * CDXC:GroupControls 2026-07-30-14:30 Every workspace group keeps enabled
+   * split-count and orientation controls, including empty or background groups;
+   * each update targets that group without changing workspace focus.
+   */
   const setVisibleCount = (visibleCount: VisibleSessionCount) => {
     if (isBrowserGroup) {
       return;
@@ -499,15 +502,12 @@ export function SessionGroupSection({
 
     setOpenControlMenu(undefined);
     vscode.postMessage({
+      groupId: group.groupId,
       type: "setVisibleCount",
       visibleCount,
     });
   };
 
-  /**
-   * CDXC:SessionLayout 2026-07-30-13:01 Active groups keep their split count
-   * while users choose whether those sessions appear side by side, stacked, or in a grid.
-   */
   const setViewMode = (viewMode: TerminalViewMode) => {
     if (isBrowserGroup) {
       return;
@@ -515,6 +515,7 @@ export function SessionGroupSection({
 
     setOpenControlMenu(undefined);
     vscode.postMessage({
+      groupId: group.groupId,
       type: "setViewMode",
       viewMode,
     });
@@ -766,15 +767,17 @@ export function SessionGroupSection({
                     }
                     type="button"
                   >
-                    <span className="group-title section-titlebar-label">{group.title}</span>
+                    <span className="group-title-content">
+                      <span className="group-title section-titlebar-label">{group.title}</span>
+                      {worktreeName !== undefined ? (
+                        <span className="group-worktree-title" title={worktreeName}>
+                          {worktreeName}
+                        </span>
+                      ) : null}
+                    </span>
                   </button>
                 </div>
                 <div className="group-title-spacer" />
-                {worktreeName ? (
-                  <span className="group-worktree-title" title={worktreeName}>
-                    {worktreeName}
-                  </span>
-                ) : null}
                 {browserTabCount > 0 ? (
                   <span
                     aria-label={`${String(browserTabCount)} browser tab${browserTabCount === 1 ? "" : "s"}`}
@@ -792,29 +795,27 @@ export function SessionGroupSection({
                     event.stopPropagation();
                   }}
                 >
-                  {group.isActive && !isBrowserGroup ? (
+                  {!isBrowserGroup ? (
                     <div className="group-layout-controls">
-                      {group.layoutVisibleCount > 1 ? (
-                        <div className="group-control-anchor">
-                          <button
-                            aria-expanded={openControlMenu === "layout"}
-                            aria-haspopup="menu"
-                            aria-label={`Select layout for ${group.title}`}
-                            className="group-add-button group-control-button"
-                            data-open={String(openControlMenu === "layout")}
-                            onClick={() => {
-                              setOpenControlMenu((previous) =>
-                                previous === "layout" ? undefined : "layout",
-                              );
-                            }}
-                            ref={layoutButtonRef}
-                            title={`Select layout for ${group.title}`}
-                            type="button"
-                          >
-                            <IconLayoutColumns aria-hidden size={14} stroke={1.8} />
-                          </button>
-                        </div>
-                      ) : null}
+                      <div className="group-control-anchor">
+                        <button
+                          aria-expanded={openControlMenu === "layout"}
+                          aria-haspopup="menu"
+                          aria-label={`Select layout for ${group.title}`}
+                          className="group-add-button group-control-button"
+                          data-open={String(openControlMenu === "layout")}
+                          onClick={() => {
+                            setOpenControlMenu((previous) =>
+                              previous === "layout" ? undefined : "layout",
+                            );
+                          }}
+                          ref={layoutButtonRef}
+                          title={`Select layout for ${group.title}`}
+                          type="button"
+                        >
+                          <IconLayoutColumns aria-hidden size={14} stroke={1.8} />
+                        </button>
+                      </div>
                       <div className="group-control-anchor">
                         <button
                           aria-expanded={openControlMenu === "visible-count"}
@@ -839,7 +840,7 @@ export function SessionGroupSection({
                           type="button"
                         >
                           <span className="group-control-count-value">
-                            {String(group.layoutVisibleCount)}
+                            {String(group.visibleCount)}
                           </span>
                         </button>
                       </div>
@@ -1057,10 +1058,10 @@ export function SessionGroupSection({
             >
               {COUNT_OPTIONS.map((visibleCount) => (
                 <button
-                  aria-pressed={group.layoutVisibleCount === visibleCount}
+                  aria-pressed={group.visibleCount === visibleCount}
                   aria-label={getVisibleCountMenuLabel(visibleCount)}
                   className="session-context-menu-item group-control-menu-item"
-                  data-selected={String(group.layoutVisibleCount === visibleCount)}
+                  data-selected={String(group.visibleCount === visibleCount)}
                   key={visibleCount}
                   onClick={() => setVisibleCount(visibleCount)}
                   role="menuitem"
@@ -1135,8 +1136,8 @@ function getPortalMenuStyle(button: HTMLButtonElement | null) {
 }
 
 /**
- * CDXC:GroupWorktrees 2026-07-30-13:01 Group headers keep their editable title
- * on the left and show the assigned worktree dimmed at the right edge.
+ * CDXC:GroupWorktrees 2026-07-30-14:42 Group headers show their assigned
+ * worktree as a dimmed caption below the editable title so hover controls cannot hide it.
  */
 function getGroupWorktreeName(worktreePath: string | undefined): string | undefined {
   const pathParts = worktreePath?.trim().replaceAll("\\", "/").split("/").filter(Boolean);

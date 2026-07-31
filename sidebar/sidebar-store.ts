@@ -518,6 +518,10 @@ function reconcileSectionCollapseState(
 }
 
 function toSidebarGroupRecord(group: SidebarSessionGroup): SidebarGroupRecord {
+  /**
+   * CDXC:SidebarGroups 2026-07-30-14:57 Retain the extension-selected worktree
+   * so each group labels its assigned directory instead of Workspace root.
+   */
   return {
     groupId: group.groupId,
     isActive: group.isActive,
@@ -527,6 +531,7 @@ function toSidebarGroupRecord(group: SidebarSessionGroup): SidebarGroupRecord {
     title: group.title,
     viewMode: group.viewMode,
     visibleCount: group.visibleCount,
+    worktreePath: group.worktreePath,
   };
 }
 
@@ -539,7 +544,8 @@ function haveSameSidebarGroupRecord(left: SidebarGroupRecord, right: SidebarGrou
     left.layoutVisibleCount === right.layoutVisibleCount &&
     left.title === right.title &&
     left.viewMode === right.viewMode &&
-    left.visibleCount === right.visibleCount
+    left.visibleCount === right.visibleCount &&
+    left.worktreePath === right.worktreePath
   );
 }
 

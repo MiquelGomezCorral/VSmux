@@ -90,8 +90,8 @@ export type SidebarMessageHandlers = {
   syncSidebarAgentOrder: (requestId: string, agentIds: readonly string[]) => Promise<void>;
   setSidebarGitPrimaryAction: (action: SidebarGitAction) => Promise<void>;
   toggleActiveSessionsSortMode: () => Promise<void>;
-  setViewMode: (viewMode: TerminalViewMode) => Promise<void>;
-  setVisibleCount: (visibleCount: VisibleSessionCount) => Promise<void>;
+  setViewMode: (viewMode: TerminalViewMode, groupId: string) => Promise<void>;
+  setVisibleCount: (visibleCount: VisibleSessionCount, groupId: string) => Promise<void>;
   syncGroupOrder: (groupIds: readonly string[]) => Promise<void>;
   syncSessionOrder: (groupId: string, sessionIds: readonly string[]) => Promise<void>;
   syncSidebarCommandOrder: (requestId: string, commandIds: readonly string[]) => Promise<void>;
@@ -316,14 +316,10 @@ export async function dispatchSidebarMessage(
       await handlers.createGroupFromSession(message.sessionId);
       return;
     case "setVisibleCount":
-      if (message.visibleCount) {
-        await handlers.setVisibleCount(message.visibleCount);
-      }
+      await handlers.setVisibleCount(message.visibleCount, message.groupId);
       return;
     case "setViewMode":
-      if (message.viewMode) {
-        await handlers.setViewMode(message.viewMode);
-      }
+      await handlers.setViewMode(message.viewMode, message.groupId);
       return;
     case "toggleActiveSessionsSortMode":
       await handlers.toggleActiveSessionsSortMode();
