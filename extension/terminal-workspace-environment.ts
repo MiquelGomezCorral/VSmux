@@ -109,6 +109,8 @@ export function getSessionActivityLabel(
   switch (activity) {
     case "working":
       return `${titleCaseAgentName} active`;
+    case "waiting":
+      return `${titleCaseAgentName} is waiting for input`;
     case "attention":
       return `${titleCaseAgentName} needs attention`;
     default:

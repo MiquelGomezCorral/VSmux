@@ -3,7 +3,11 @@ import type { SidebarSessionItem } from "../../shared/session-grid-contract";
 export function shouldSkipSessionForIndicatorProtectedGroupAction(
   session: Pick<SidebarSessionItem, "activity">,
 ): boolean {
-  return session.activity === "working" || session.activity === "attention";
+  return (
+    session.activity === "working" ||
+    session.activity === "waiting" ||
+    session.activity === "attention"
+  );
 }
 
 export function shouldSkipSessionForGroupFullReload(

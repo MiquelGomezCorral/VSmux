@@ -86,6 +86,7 @@ import {
   getEffectiveSessionActivity,
   getDisplayedLastInteractionIso,
   INITIAL_ACTIVITY_SUPPRESSION_MS,
+  shouldQueueCompletionSoundForActivityTransition,
   shouldRecordLastActivityTransition,
   syncKnownSessionActivities,
 } from "./activity";
@@ -335,7 +336,7 @@ import {
   createT3IframeSource,
 } from "../t3-webview-manager/html";
 import { getHtmlCacheKey as getT3PaneHtmlReadyCacheKey } from "../t3-webview-manager/helpers";
-import { playCloseTerminalOnExitSound } from "../terminal-exit-sound";
+import { playLocalNotificationSound } from "../local-audio-client";
 import {
   getT3SessionBoundThreadId,
   setT3SessionBoundThreadId,
@@ -355,7 +356,6 @@ import {
 
 const SHORTCUT_LABEL_PLATFORM = process.platform === "darwin" ? "mac" : "default";
 const COMMAND_TERMINAL_EXIT_POLL_MS = 250;
-const COMPLETION_SOUND_CONFIRMATION_DELAY_MS = 1_000;
 const ESCAPE_ATTENTION_SUPPRESSION_MS = 2_000;
 const FORK_RENAME_DELAY_MS = 4_000;
 const WORKSPACE_RENAME_TOAST_DURATION_MS = 3_000;
@@ -470,7 +470,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   >();
   private readonly lastKnownActivityBySessionId = new Map<
     string,
-    "idle" | "working" | "attention"
+    TerminalAgentStatus
   >();
   private readonly activitySuppressedUntilBySessionId = new Map<string, number>();
   private readonly attentionSuppressedUntilBySessionId = new Map<string, number>();
@@ -480,7 +480,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   private readonly t3WorkingStartedAtBySessionId = new Map<string, number>();
   private readonly workingStartedAtBySessionId = new Map<string, number>();
   private readonly focusedAtBySessionId = new Map<string, number>();
-  private readonly pendingCompletionSoundTimeoutBySessionId = new Map<string, NodeJS.Timeout>();
   private pendingSettingsSoundPreview:
     | {
         setting: typeof ACTION_COMPLETION_SOUND_SETTING | typeof COMPLETION_SOUND_SETTING;
@@ -786,11 +785,15 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
           await this.refreshSidebar("sessionState", "backend.onDidChangeSessions");
         })();
       }),
-      this.backend.onDidChangeSessionActivity(({ didComplete, sessionId }) => {
+      this.backend.onDidChangeSessionActivity(({ kind, notificationId, sessionId }) => {
         const snapshot = this.backend.getSessionSnapshot(sessionId);
-        this.syncSessionActivityState(sessionId, didComplete === true);
+        this.syncSessionActivityState(sessionId, false);
+        if (notificationId && kind) {
+          this.queueCompletionSound(sessionId);
+        }
         void this.appendFirstPromptAutoRenameReproLog("controller.firstPromptAutoRename.activity", {
-          didComplete: didComplete === true,
+          notificationKind: kind,
+          notificationId,
           inProgress: this.isFirstPromptAutoRenameInProgress(sessionId),
           sessionId,
         });
@@ -801,7 +804,8 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
           void this.appendClaudeFirstMessageRenameIssueLog("controller.activityObserved", {
             agentName: snapshot?.agentName,
             agentStatus: snapshot?.agentStatus,
-            didComplete: didComplete === true,
+            notificationKind: kind,
+            notificationId,
             sessionId,
           });
         }
@@ -811,7 +815,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       this.backend.onDidChangeSessionPresentation(({ sessionId, title }) => {
         void (async () => {
           const snapshot = this.backend.getSessionSnapshot(sessionId);
-          this.syncSessionActivityState(sessionId, true);
+          this.syncSessionActivityState(sessionId, false);
           this.logSessionTitleSymbols(sessionId, title ?? snapshot?.title, snapshot?.agentName);
           logVSmuxDebug("controller.sessionPresentationChanged", {
             agentName: snapshot?.agentName,
@@ -1088,10 +1092,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       clearInterval(this.autoSleepTimer);
       this.autoSleepTimer = undefined;
     }
-    for (const timeout of this.pendingCompletionSoundTimeoutBySessionId.values()) {
-      clearTimeout(timeout);
-    }
-    this.pendingCompletionSoundTimeoutBySessionId.clear();
     if (this.pendingSettingsSoundPreview) {
       clearTimeout(this.pendingSettingsSoundPreview.timeout);
       this.pendingSettingsSoundPreview = undefined;
@@ -3892,9 +3892,9 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
         setting,
         sound,
       });
-      void this.sidebarProvider.postMessage({
+      void playLocalNotificationSound({
         sound,
-        type: "playCompletionSound",
+        volume: 1,
       });
     }, SETTINGS_SOUND_PREVIEW_DEBOUNCE_MS);
 
@@ -5411,7 +5411,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   }
 
   private getT3ActivityState(sessionRecord: SessionRecord): {
-    activity: "idle" | "working" | "attention";
+    activity: TerminalAgentStatus;
     detail?: string;
     isRunning: boolean;
     lastInteractionAt?: string;
@@ -5557,7 +5557,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     this.t3WorkingStartedAtBySessionId.delete(sessionId);
     this.workingStartedAtBySessionId.delete(sessionId);
     this.focusedAtBySessionId.delete(sessionId);
-    this.clearPendingCompletionSound(sessionId);
     this.pendingFirstPromptAutoRenameBySessionId.delete(sessionId);
     this.firstPromptAutoRenameRequestVersionBySessionId.delete(sessionId);
     this.clearPendingForkRename(sessionId);
@@ -5666,12 +5665,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
 
   private createSessionActivityContext(): Parameters<typeof getEffectiveSessionActivity>[0] {
     return {
-      cancelPendingCompletionSound: (sessionId) => {
-        this.logCompletionSoundDebug("controller.completionSound.cancelRequestedFromBulkSync", {
-          sessionId,
-        });
-        this.clearPendingCompletionSound(sessionId);
-      },
       getAttentionSuppressedUntil: (sessionRecord) =>
         this.getAttentionSuppressedUntil(sessionRecord),
       getActivitySuppressedUntil: (sessionRecord) => this.getActivitySuppressedUntil(sessionRecord),
@@ -5818,7 +5811,6 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     this.lastActivityIgnoreUntilBySessionId.set(sessionRecord.sessionId, suppressedUntil);
     this.activitySuppressedUntilBySessionId.set(sessionRecord.sessionId, suppressedUntil);
     this.workingStartedAtBySessionId.delete(sessionRecord.sessionId);
-    this.clearPendingCompletionSound(sessionRecord.sessionId);
     logVSmuxDebug("controller.activitySuppression.started", {
       displayedLastActivityAt: formatDebugActivityAt(displayedLastActivityAt),
       frozenLastActivityAt: formatDebugActivityAt(displayedLastActivityAt),
@@ -6044,12 +6036,8 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       terminalTitle: this.terminalTitleBySessionId.get(sessionId),
     });
     this.recordLastActivityTransition(sessionRecord, previousActivity, nextActivity);
-    if (playSound && nextActivity === "attention") {
-      if (previousActivity !== undefined && previousActivity !== "attention") {
-        this.queueCompletionSound(sessionId);
-      }
-    } else if (playSound) {
-      this.clearPendingCompletionSound(sessionId);
+    if (playSound && shouldQueueCompletionSoundForActivityTransition(previousActivity, nextActivity)) {
+      this.queueCompletionSound(sessionId);
     }
 
     this.lastKnownActivityBySessionId.set(sessionId, nextActivity);
@@ -6167,27 +6155,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     return this.backend.getLastTerminalActivityAt(sessionId);
   }
 
-  private clearPendingCompletionSound(sessionId: string): void {
-    const timeout = this.pendingCompletionSoundTimeoutBySessionId.get(sessionId);
-    if (!timeout) {
-      this.logCompletionSoundDebug("controller.completionSound.clearNoop", {
-        sessionId,
-      });
-      return;
-    }
-
-    clearTimeout(timeout);
-    this.pendingCompletionSoundTimeoutBySessionId.delete(sessionId);
-    this.logCompletionSoundDebug("controller.completionSound.cleared", {
-      sessionId,
-    });
-    logVSmuxDebug("controller.completionSound.cleared", {
-      sessionId,
-    });
-  }
-
   private queueCompletionSound(sessionId: string): void {
-    const queuedAt = Date.now();
     if (!this.getCompletionBellEnabled()) {
       this.logCompletionSoundDebug("controller.completionSound.skippedDisabled", {
         completionBellEnabled: false,
@@ -6199,74 +6167,26 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       return;
     }
 
-    if (this.pendingCompletionSoundTimeoutBySessionId.has(sessionId)) {
-      this.logCompletionSoundDebug("controller.completionSound.alreadyQueued", {
-        sessionId,
-      });
-      logVSmuxDebug("controller.completionSound.alreadyQueued", {
-        sessionId,
-      });
-      return;
-    }
-
-    this.logCompletionSoundDebug("controller.completionSound.queued", {
-      delayMs: COMPLETION_SOUND_CONFIRMATION_DELAY_MS,
+    const agentStatus = this.backend.getSessionSnapshot(sessionId)?.agentStatus;
+    this.logCompletionSoundDebug("controller.completionSound.firing", {
+      agentStatus,
       sessionId,
       sound: getClampedCompletionSoundSetting(),
     });
-    logVSmuxDebug("controller.completionSound.queued", {
-      delayMs: COMPLETION_SOUND_CONFIRMATION_DELAY_MS,
+    logVSmuxDebug("controller.completionSound.firing", {
       sessionId,
       sound: getClampedCompletionSoundSetting(),
     });
-    const timeout = setTimeout(() => {
-      this.pendingCompletionSoundTimeoutBySessionId.delete(sessionId);
-      if (!this.getCompletionBellEnabled()) {
-        this.logCompletionSoundDebug("controller.completionSound.skippedDisabledAtFire", {
-          sessionId,
-        });
-        logVSmuxDebug("controller.completionSound.skippedDisabledAtFire", {
-          sessionId,
-        });
-        return;
-      }
-
-      if (this.backend.getSessionSnapshot(sessionId)?.agentStatus !== "attention") {
-        this.logCompletionSoundDebug("controller.completionSound.skippedNotAttentionAtFire", {
-          agentStatus: this.backend.getSessionSnapshot(sessionId)?.agentStatus,
-          sessionId,
-        });
-        logVSmuxDebug("controller.completionSound.skippedNotAttentionAtFire", {
-          agentStatus: this.backend.getSessionSnapshot(sessionId)?.agentStatus,
-          sessionId,
-        });
-        return;
-      }
-
-      this.logCompletionSoundDebug("controller.completionSound.firing", {
-        elapsedMs: Date.now() - queuedAt,
-        sessionId,
-        sound: getClampedCompletionSoundSetting(),
-      });
-      logVSmuxDebug("controller.completionSound.firing", {
-        sessionId,
-        sound: getClampedCompletionSoundSetting(),
-      });
-      void this.sidebarProvider.postMessage({
-        sound: getClampedCompletionSoundSetting(),
-        sessionId,
-        type: "playCompletionSound",
-      });
-      this.logCompletionSoundDebug("controller.completionSound.sidebarPostMessageRequested", {
-        sessionId,
-        sound: getClampedCompletionSoundSetting(),
-      });
+    void playLocalNotificationSound({
+      sound: getClampedCompletionSoundSetting(),
+      volume: 1,
+    });
+    if (agentStatus === "attention") {
       void this.workspacePanel.postMessage({
         sessionId,
         type: "flashCompletionSession",
       });
-    }, COMPLETION_SOUND_CONFIRMATION_DELAY_MS);
-    this.pendingCompletionSoundTimeoutBySessionId.set(sessionId, timeout);
+    }
   }
 
   /**
@@ -6622,9 +6542,9 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     );
 
     if (didFail || options.playCompletionSound) {
-      await playCloseTerminalOnExitSound({
-        extensionUri: this.context.extensionUri,
+      await playLocalNotificationSound({
         sound: getClampedActionCompletionSoundSetting(),
+        volume: 0.5,
       });
     }
 

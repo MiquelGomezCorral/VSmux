@@ -1,7 +1,7 @@
 {
   "name": "VSmux",
   "displayName": "VSmux - T3code & Agent CLIs Manager",
-  "version": "5.1.1",
+  "version": "5.1.3",
   "private": true,
   "description": "VSmux - T3code & Agent CLIs Manager",
   "categories": [
@@ -14,6 +14,12 @@
     "url": "https://github.com/maddada/VSmux.git"
   },
   "publisher": "maddada",
+  "extensionKind": [
+    "workspace"
+  ],
+  "extensionDependencies": [
+    "maddada.vsmux-local-audio"
+  ],
   "files": [
     "media/**",
     "chat-history/media/**",
@@ -48,6 +54,7 @@
     "build:extension:rollback": "node ./scripts/build-extension.mjs --rollback",
     "build:extension:original": "node ./scripts/build-extension.mjs --serial",
     "build:extension:minimal": "node ./scripts/build-extension.mjs --minimal",
+    "build:local-audio": "node ./scripts/build-local-audio.mjs",
     "vscode:prepublish": "node ./scripts/vscode-prepublish.mjs",
     "sidebar:build": "node ./scripts/vp.mjs build --config vite.sidebar.config.ts",
     "debug-panel:build": "node ./scripts/vp.mjs build --config vite.debug-panel.config.ts",

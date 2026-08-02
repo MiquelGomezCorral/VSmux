@@ -6,17 +6,33 @@ import type { TerminalEngine } from "./session-grid-contract";
  * intentionally reused across extension reloads when the protocol matches, so
  * behavior-only daemon fixes need a version change to replace old processes.
  */
-export const TERMINAL_HOST_PROTOCOL_VERSION = 32;
+export const TERMINAL_HOST_PROTOCOL_VERSION = 33;
 
 export type TerminalSessionStatus = "starting" | "running" | "exited" | "error" | "disconnected";
 
 export type TerminalSessionRestoreState = "live" | "replayed";
 
-export type TerminalAgentStatus = "idle" | "working" | "attention";
+/**
+ * CDXC:Agent-input-waiting 2026-07-31-14:11
+ * A session is waiting only while its wrapped CLI exposes a structured prompt
+ * that blocks on user input. This is distinct from completed attention and
+ * must remain visible until the prompt is answered or the agent resumes.
+ */
+export type TerminalAgentStatus = "idle" | "working" | "waiting" | "attention";
+export type TerminalAgentStatusSource = "structured" | "title";
+export type TerminalAgentNotificationKind = "waiting" | "completion";
 
 export type TerminalSessionSnapshot = {
   agentName?: string;
   agentStatus: TerminalAgentStatus;
+  /**
+   * CDXC:Agent-notifications 2026-07-31-14:30
+   * Structured hook states must beat stale terminal titles, and notification
+   * sounds are keyed by semantic state events instead of repeated rendering.
+   */
+  agentStatusSource?: TerminalAgentStatusSource;
+  agentNotificationKind?: TerminalAgentNotificationKind;
+  agentNotificationSequence?: number;
   cols: number;
   cwd: string;
   exitCode?: number;

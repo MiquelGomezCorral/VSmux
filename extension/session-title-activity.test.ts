@@ -443,6 +443,16 @@ describe("getTitleDerivedSessionActivity", () => {
     });
   });
 
+  test("should detect Gemini action-required titles as waiting", () => {
+    expect(getTitleDerivedSessionActivity("✋ Action Required (agent-tiler)", undefined, "gemini")).toEqual({
+      activity: "waiting",
+      agentName: "gemini",
+      hasSeenWorking: true,
+      isAcknowledged: false,
+      lastTitleChangeAt: undefined,
+    });
+  });
+
   test("should allow a static Gemini working glyph to count as working", () => {
     expect(getTitleDerivedSessionActivity("✦ agent-tiler")).toEqual({
       activity: "working",

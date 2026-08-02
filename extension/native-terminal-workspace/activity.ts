@@ -10,7 +10,6 @@ export const INITIAL_ACTIVITY_SUPPRESSION_MS = 7_000;
 export const MIN_WORKING_DURATION_BEFORE_LAST_ACTIVITY_MS = 7_000;
 
 type SessionActivityContext = {
-  cancelPendingCompletionSound: (sessionId: string) => void;
   getActivitySuppressedUntil?: (sessionRecord: SessionRecord) => number | undefined;
   getAttentionSuppressedUntil?: (sessionRecord: SessionRecord) => number | undefined;
   getSessionSnapshot: (sessionId: string) => TerminalSessionSnapshot | undefined;
@@ -54,6 +53,22 @@ export function shouldRefreshLastActivityOnTransition(
   );
 }
 
+/**
+ * CDXC:Agent-input-waiting 2026-07-31-14:11
+ * A structured user-input blocker uses the configured completion sound once,
+ * exactly like a completed turn, when an already-observed session enters it.
+ */
+export function shouldQueueCompletionSoundForActivityTransition(
+  previousActivity: TerminalAgentStatus | undefined,
+  nextActivity: TerminalAgentStatus,
+): boolean {
+  return (
+    previousActivity !== undefined &&
+    previousActivity !== nextActivity &&
+    (nextActivity === "attention" || nextActivity === "waiting")
+  );
+}
+
 export function shouldRecordLastActivityTransition(args: {
   hasCompletedInitialActivityHydration: boolean;
   nextActivity: TerminalAgentStatus;
@@ -85,7 +100,17 @@ export function getEffectiveSessionActivity(
 
   const sessionId = sessionRecord.sessionId;
   const now = Date.now();
-  const shouldTrustNativeAgentStatus = isTrustedNativeAgentStatus(sessionSnapshot.agentName);
+  const shouldTrustNativeAgentStatus = isTrustedNativeAgentStatus(
+    sessionSnapshot.agentName,
+    sessionSnapshot.agentStatusSource,
+  );
+  if (sessionSnapshot.agentStatus === "waiting") {
+    return {
+      activity: "waiting",
+      agentName: sessionSnapshot.agentName,
+    };
+  }
+
   const activitySuppressedUntil = context.getActivitySuppressedUntil?.(sessionRecord);
   if (
     !shouldTrustNativeAgentStatus &&
@@ -163,8 +188,11 @@ export function getEffectiveSessionActivity(
   };
 }
 
-function isTrustedNativeAgentStatus(agentName: string | undefined): boolean {
-  return agentName?.trim().toLowerCase() === "opencode";
+function isTrustedNativeAgentStatus(
+  agentName: string | undefined,
+  agentStatusSource: TerminalSessionSnapshot["agentStatusSource"],
+): boolean {
+  return agentStatusSource === "structured" || agentName?.trim().toLowerCase() === "opencode";
 }
 
 export async function syncKnownSessionActivities(
@@ -185,14 +213,10 @@ export async function syncKnownSessionActivities(
       continue;
     }
 
-    if (effectiveActivity.activity === "attention") {
-      if (previousActivity !== "attention") {
-        context.queueCompletionSound(sessionRecord.sessionId);
-      }
-      continue;
+    if (shouldQueueCompletionSoundForActivityTransition(previousActivity, effectiveActivity.activity)) {
+      context.queueCompletionSound(sessionRecord.sessionId);
     }
 
-    context.cancelPendingCompletionSound(sessionRecord.sessionId);
   }
 
   context.lastKnownActivityBySessionId.clear();

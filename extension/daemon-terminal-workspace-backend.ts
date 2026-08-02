@@ -121,6 +121,13 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
       this.sessions.set(snapshot.sessionId, snapshot);
       void this.refreshPersistedSessionActivity(snapshot.sessionId);
       const nextTitle = this.syncSessionTitle(snapshot.sessionId, snapshot.title);
+      const notificationChange = createSessionNotificationActivityChange(
+        previousSnapshot,
+        snapshot,
+      );
+      if (this.hasInitialized && notificationChange) {
+        this.changeSessionActivityEmitter.fire(notificationChange);
+      }
       logVSmuxDebug("backend.daemon.sessionState", {
         agentName: snapshot.agentName,
         agentStatus: snapshot.agentStatus,
@@ -169,6 +176,12 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
         this.changeSessionsEmitter.fire();
       }
     });
+    /**
+     * CDXC:Agent-notifications 2026-08-02-12:11
+     * Persisted notification revisions describe an already-notified session
+     * after reload. Hydrate them as the baseline before allowing later edges
+     * to play one local sound while the sidebar is hidden or unopened.
+     */
     await this.refreshSessionSnapshots();
     void appendTerminalRestartReproLog(this.options.workspaceRoot, "backend.initialize.ready", {
       sessionCount: this.sessions.size,
@@ -446,9 +459,7 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
     }
 
     this.lastTerminalActivityAtBySessionId.set(sessionId, nextActivityAtMs);
-    this.changeSessionActivityEmitter.fire(
-      createPersistedSessionActivityChange(sessionId, persistedState),
-    );
+    this.changeSessionActivityEmitter.fire({ sessionId });
   }
 
   public async killSession(sessionId: string): Promise<void> {
@@ -628,6 +639,14 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
       }
       this.sessions.set(sessionId, nextSnapshot);
       didObserveActivityChange ||= await this.refreshPersistedSessionActivity(sessionId);
+      const notificationChange = createSessionNotificationActivityChange(
+        previousSnapshot,
+        nextSnapshot,
+      );
+      if (this.hasInitialized && notificationChange) {
+        didObserveActivityChange = true;
+        this.changeSessionActivityEmitter.fire(notificationChange);
+      }
       const nextTitle = this.syncSessionTitle(sessionId, nextSnapshot.title);
       const presentationDiff = describeTerminalSessionPresentationDiff(
         previousSnapshot,
@@ -901,26 +920,40 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
     }
 
     this.lastTerminalActivityAtBySessionId.set(sessionId, nextActivityAtMs);
-    const activityChange = createPersistedSessionActivityChange(sessionId, persistedState.state);
     logVSmuxDebug("backend.daemon.sessionActivity.updated", {
-      didComplete: activityChange.didComplete === true,
       nextActivityAt: formatDebugActivityAt(nextActivityAtMs),
       previousActivityAt: formatDebugActivityAt(previousActivityAtMs),
       sessionId,
     });
-    this.changeSessionActivityEmitter.fire(activityChange);
+    this.changeSessionActivityEmitter.fire({ sessionId });
     return true;
   }
 }
 
-export function createPersistedSessionActivityChange(
-  sessionId: string,
-  persistedState: PersistedSessionState,
-): TerminalWorkspaceBackendActivityChange {
+export function createSessionNotificationActivityChange(
+  previousSnapshot: TerminalSessionSnapshot | undefined,
+  nextSnapshot: TerminalSessionSnapshot,
+): TerminalWorkspaceBackendActivityChange | undefined {
+  const notificationId = getSessionNotificationId(nextSnapshot);
+  if (!notificationId || notificationId === getSessionNotificationId(previousSnapshot)) {
+    return undefined;
+  }
+
   return {
-    didComplete: persistedState.agentStatus === "attention",
-    sessionId,
+    kind: nextSnapshot.agentNotificationKind,
+    notificationId,
+    sessionId: nextSnapshot.sessionId,
   };
+}
+
+function getSessionNotificationId(
+  snapshot: TerminalSessionSnapshot | undefined,
+): string | undefined {
+  if (!snapshot?.agentNotificationKind || snapshot.agentNotificationSequence === undefined) {
+    return undefined;
+  }
+
+  return `${snapshot.agentStatusSource ?? "unknown"}:${snapshot.agentNotificationSequence}:${snapshot.agentNotificationKind}`;
 }
 
 function formatDebugActivityAt(value: number | undefined): string | undefined {
@@ -955,7 +988,10 @@ export function applyPersistedSessionStateToDisconnectedSnapshot(
   return {
     ...snapshot,
     agentName: persistedState.agentName,
+    agentNotificationKind: persistedState.agentNotificationKind,
+    agentNotificationSequence: persistedState.agentNotificationSequence,
     agentStatus: persistedState.agentStatus,
+    agentStatusSource: persistedState.agentStatusSource,
     cwd: persistedState.cwd ?? snapshot.cwd,
     endedAt: persistedState.frozenAt,
     history,

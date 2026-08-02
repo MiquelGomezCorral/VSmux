@@ -367,6 +367,7 @@
 }
 
 .session-frame[data-activity="working"] .session-status-dot,
+.session-frame[data-activity="waiting"] .session-status-dot,
 .session-frame[data-activity="attention"] .session-status-dot,
 .session-frame[data-lifecycle-state="error"] .session-status-dot {
   opacity: 1;
@@ -375,6 +376,10 @@
 .session-frame[data-activity="working"] .session-status-dot {
   --session-status-dot-color: #ffb454;
   animation: session-status-dot-pulse 1.35s ease-in-out infinite;
+}
+
+.session-frame[data-activity="waiting"] .session-status-dot {
+  --session-status-dot-color: var(--waiting-dot);
 }
 
 .session-frame[data-lifecycle-state="error"] .session-status-dot {
@@ -400,6 +405,7 @@
 }
 
 .session-status-dot-anchored[data-activity="working"],
+.session-status-dot-anchored[data-activity="waiting"],
 .session-status-dot-anchored[data-activity="attention"],
 .session-status-dot-anchored[data-lifecycle-state="error"] {
   opacity: 1;
@@ -408,6 +414,10 @@
 .session-status-dot-anchored[data-activity="working"] {
   --session-status-dot-color: #ffb454;
   animation: session-status-dot-pulse 1.35s ease-in-out infinite;
+}
+
+.session-status-dot-anchored[data-activity="waiting"] {
+  --session-status-dot-color: var(--waiting-dot);
 }
 
 .session-status-dot-anchored[data-lifecycle-state="error"] {

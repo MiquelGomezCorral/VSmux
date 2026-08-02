@@ -1,6 +1,5 @@
-import { readFileSync } from "node:fs";
 import * as vscode from "vscode";
-import { COMPLETION_SOUND_OPTIONS, getCompletionSoundFileName } from "../shared/completion-sound";
+import { COMPLETION_SOUND_OPTIONS } from "../shared/completion-sound";
 import { isSidebarCommandRunMode } from "../shared/sidebar-commands";
 import {
   isSidebarCommandIcon,
@@ -107,7 +106,6 @@ export class SessionSidebarViewProvider implements vscode.Disposable, vscode.Web
       enableScripts: true,
       localResourceRoots: extensionUri
         ? [
-            vscode.Uri.joinPath(extensionUri, "media", "sounds"),
             vscode.Uri.joinPath(extensionUri, "out", "sidebar"),
           ]
         : undefined,
@@ -405,16 +403,13 @@ function getSidebarHtml(webview: vscode.Webview, extensionUri: vscode.Uri | unde
     vscode.Uri.joinPath(extensionUri, "out", "sidebar", "sidebar.css"),
   );
   const nonce = getNonce();
-  const soundUrls = buildEmbeddedSoundUrls(extensionUri);
-  const soundUrlsJson = JSON.stringify(soundUrls).replace(/</g, "\\u003c");
-
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'nonce-${nonce}'; img-src ${webview.cspSource} data:; media-src ${webview.cspSource} data:;"
+      content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'nonce-${nonce}'; img-src ${webview.cspSource} data:;"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Agent Sessions</title>
@@ -422,27 +417,9 @@ function getSidebarHtml(webview: vscode.Webview, extensionUri: vscode.Uri | unde
   </head>
   <body>
     <div id="root"></div>
-    <script nonce="${nonce}">
-      window.__VSMUX_SOUND_URLS__ = ${soundUrlsJson};
-    </script>
     <script nonce="${nonce}" src="${scriptUri}" type="module"></script>
   </body>
 </html>`;
-}
-
-function buildEmbeddedSoundUrls(extensionUri: vscode.Uri): Record<string, string> {
-  return Object.fromEntries(
-    COMPLETION_SOUND_OPTIONS.map((option) => {
-      const soundFileUri = vscode.Uri.joinPath(
-        extensionUri,
-        "media",
-        "sounds",
-        getCompletionSoundFileName(option.value),
-      );
-      const soundBytes = readFileSync(soundFileUri.fsPath);
-      return [option.value, `data:audio/mpeg;base64,${soundBytes.toString("base64")}`];
-    }),
-  );
 }
 
 function getExtensionUri(): vscode.Uri | undefined {

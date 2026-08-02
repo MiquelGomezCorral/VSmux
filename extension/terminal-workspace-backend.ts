@@ -1,6 +1,9 @@
 import * as vscode from "vscode";
 import type { SessionRecord } from "../shared/session-grid-contract";
-import type { TerminalSessionSnapshot } from "../shared/terminal-host-protocol";
+import type {
+  TerminalAgentNotificationKind,
+  TerminalSessionSnapshot,
+} from "../shared/terminal-host-protocol";
 import type { PersistedSessionState } from "./session-state-file";
 
 export type TerminalCreateOrAttachResult = {
@@ -23,7 +26,8 @@ export type TerminalWorkspaceBackendPresentationChange = {
 };
 
 export type TerminalWorkspaceBackendActivityChange = {
-  didComplete?: boolean;
+  kind?: TerminalAgentNotificationKind;
+  notificationId?: string;
   sessionId: string;
 };
 

@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 const validModes = new Set(["package", "install"]);
 const profileBuildFlag = "--profile-build";
 const buildScriptFlag = "--build-script";
+const profileFlag = "--profile";
 
 function fail(message) {
   if (message) {
@@ -211,15 +212,22 @@ const buildScriptFlagIndex = process.argv.indexOf(buildScriptFlag);
 const requestedBuildScript =
   buildScriptFlagIndex === -1 ? undefined : process.argv[buildScriptFlagIndex + 1];
 const buildScript = requestedBuildScript?.trim() || "build:extension";
+const profileFlagIndex = process.argv.indexOf(profileFlag);
+const requestedProfile =
+  profileFlagIndex === -1 ? undefined : process.argv[profileFlagIndex + 1]?.trim();
 
 if (!validModes.has(mode)) {
   fail(
-    `Usage: node ./scripts/vsix.mjs <package|install> [${profileBuildFlag}] [${buildScriptFlag} <script>]`,
+    `Usage: node ./scripts/vsix.mjs <package|install> [${profileBuildFlag}] [${buildScriptFlag} <script>] [${profileFlag} <name>]`,
   );
 }
 
 if (buildScriptFlagIndex !== -1 && !requestedBuildScript) {
   fail(`Missing value for ${buildScriptFlag}.`);
+}
+
+if (profileFlagIndex !== -1 && (!requestedProfile || requestedProfile.startsWith("--"))) {
+  fail(`Missing value for ${profileFlag}.`);
 }
 
 const packageJson = await import(new URL("../package.json", import.meta.url), {
@@ -228,6 +236,14 @@ const packageJson = await import(new URL("../package.json", import.meta.url), {
 const extensionName = packageJson.default.name;
 const extensionVersion = packageJson.default.version;
 const extensionPublisher = packageJson.default.publisher;
+const localAudioRoot = join(repoRoot, "local-audio");
+const localAudioPackageJson = await import(
+  new URL("../local-audio/package.json", import.meta.url),
+  {
+    with: { type: "json" },
+  },
+);
+const localAudioTarget = `${process.platform}-${process.arch}`;
 const installerDir = join(repoRoot, "installer");
 const pnpmCli = resolveCommand("pnpm");
 const vsceCli = findPackageBinaryPath("@vscode+vsce@", ["node_modules", "@vscode", "vsce", "vsce"]);
@@ -237,6 +253,12 @@ if (!existsSync(installerDir)) {
 }
 
 const vsixPath = resolveVsixPath(installerDir, extensionName, extensionVersion, mode);
+const localAudioVsixPath = resolveVsixPath(
+  installerDir,
+  `${localAudioPackageJson.default.name}-${localAudioTarget}`,
+  localAudioPackageJson.default.version,
+  mode,
+);
 
 if (!pnpmCli) {
   fail("Could not find pnpm. Install pnpm and retry.");
@@ -253,6 +275,29 @@ try {
       ...(profileBuild ? { VSMUX_PROFILE_BUILD: "1" } : {}),
     },
   });
+
+  /**
+   * CDXC:Agent-notifications 2026-08-02-12:11
+   * The local UI companion owns native playback, so install it before the
+   * workspace extension that declares it as a remote command dependency.
+   */
+  run(
+    process.execPath,
+    [
+      vsceCli,
+      "package",
+      "--no-dependencies",
+      "--skip-license",
+      "--allow-unused-files-pattern",
+      "--target",
+      localAudioTarget,
+      "--out",
+      localAudioVsixPath,
+    ],
+    {
+      cwd: localAudioRoot,
+    },
+  );
 
   run(
     process.execPath,
@@ -285,9 +330,17 @@ try {
     );
   }
 
-  run(vscodeCli, ["--install-extension", vsixPath, "--force"]);
+  /**
+   * CDXC:DevInstallation 2026-08-02-22:05 VS Code profiles register extensions
+   * independently, so a profile-targeted install must register both the local
+   * audio companion and workspace extension in that same profile.
+   */
+  const profileArgs = requestedProfile ? [profileFlag, requestedProfile] : [];
+  run(vscodeCli, ["--install-extension", localAudioVsixPath, "--force", ...profileArgs]);
+  run(vscodeCli, ["--install-extension", vsixPath, "--force", ...profileArgs]);
 } finally {
   if (mode === "install") {
+    rmSync(localAudioVsixPath, { force: true });
     rmSync(vsixPath, { force: true });
   }
 }

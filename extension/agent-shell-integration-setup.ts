@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
+import { TERMINAL_HOST_PROTOCOL_VERSION } from "../shared/terminal-host-protocol";
 import {
   getAgentWrapperCmdContent,
   getAgentWrapperShellScriptContent,
@@ -24,7 +25,12 @@ export type AgentShellIntegration = {
   zshDotDir: string;
 };
 
-const AGENT_SHELL_DIR_NAME = "agent-shell-integration";
+/**
+ * CDXC:Agent-notifications 2026-08-02-21:37
+ * Protocol upgrades must not overwrite generated wrappers/plugins still used
+ * by an older daemon, which cannot preserve newer notification state fields.
+ */
+const AGENT_SHELL_DIR_NAME = `agent-shell-integration-v${TERMINAL_HOST_PROTOCOL_VERSION}`;
 const CLAUDE_SETTINGS_FILE_NAME = "settings.json";
 const CLAUDE_NOTIFY_SCRIPT_STEM = "notify";
 const NOTIFY_RUNNER_FILE_NAME = "agent-shell-notify-runner.js";

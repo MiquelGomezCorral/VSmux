@@ -4,12 +4,17 @@ logs/
 node_modules/
 dist/
 out/
+local-audio/bin/
+local-audio/media/
+local-audio/native/miniaudio.h
+local-audio/out/
 storybook-static/
 forks/ghostty-web/dist/
 installer/
 .collaborator
 docs/*
 .brv/
+.codegraph/
 .agents/skills/byterover/
 .codex
 .tmp/

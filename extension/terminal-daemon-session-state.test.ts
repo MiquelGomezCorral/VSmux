@@ -245,4 +245,21 @@ describe("shouldPreferPersistedSessionPresentation", () => {
       }),
     ).toBe(false);
   });
+
+  test("should preserve hook-backed waiting while keeping Gemini title-backed", () => {
+    expect(
+      shouldPreferPersistedSessionPresentation({
+        agentName: "claude",
+        agentStatus: "waiting",
+        title: "Claude Code",
+      }),
+    ).toBe(true);
+    expect(
+      shouldPreferPersistedSessionPresentation({
+        agentName: "gemini",
+        agentStatus: "waiting",
+        title: "Gemini",
+      }),
+    ).toBe(false);
+  });
 });

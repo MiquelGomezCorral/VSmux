@@ -1,5 +1,5 @@
 import { normalizeTerminalTitle } from "../shared/session-grid-contract";
-import type { TerminalAgentStatus } from "../shared/terminal-host-protocol";
+import type { TerminalAgentStatus, TerminalAgentStatusSource } from "../shared/terminal-host-protocol";
 import { isGenericAgentSessionTitle } from "./first-prompt-session-title";
 import type { PersistedSessionState } from "./session-state-file";
 
@@ -8,14 +8,25 @@ export type TerminalSessionPresentationStateInput = {
   liveTitle?: string;
   snapshotAgentName?: string;
   snapshotAgentStatus?: TerminalAgentStatus;
+  snapshotAgentStatusSource?: TerminalAgentStatusSource;
   titleActivityAgentName?: string;
   titleActivityStatus?: TerminalAgentStatus;
 };
 
+/**
+ * CDXC:Agent-input-waiting 2026-07-31-14:11
+ * Hook and session-log blockers must win over stale spinner titles. Gemini
+ * is the exception because its native action-required title is the blocker.
+ */
 export function shouldPreferPersistedSessionPresentation(
   currentState: PersistedSessionState,
 ): boolean {
-  return currentState.agentName?.trim().toLowerCase() === "opencode";
+  const agentName = currentState.agentName?.trim().toLowerCase();
+  return (
+    currentState.agentStatusSource === "structured" ||
+    agentName === "opencode" ||
+    (currentState.agentStatus === "waiting" && agentName !== "gemini")
+  );
 }
 
 export function resolvePersistedSessionPresentationState(
@@ -34,6 +45,9 @@ export function resolvePersistedSessionPresentationState(
     return {
       agentName: currentState.agentName ?? input.snapshotAgentName ?? input.titleActivityAgentName,
       agentStatus: currentState.agentStatus,
+      agentStatusSource: currentState.agentStatusSource ?? input.snapshotAgentStatusSource,
+      agentNotificationKind: currentState.agentNotificationKind,
+      agentNotificationSequence: currentState.agentNotificationSequence,
       ...sharedState,
     };
   }
@@ -41,6 +55,11 @@ export function resolvePersistedSessionPresentationState(
   return {
     agentName: input.titleActivityAgentName ?? input.snapshotAgentName ?? currentState.agentName,
     agentStatus: input.titleActivityStatus ?? input.snapshotAgentStatus ?? currentState.agentStatus,
+    agentStatusSource: input.titleActivityStatus
+      ? "title"
+      : (input.snapshotAgentStatusSource ?? currentState.agentStatusSource),
+    agentNotificationKind: currentState.agentNotificationKind,
+    agentNotificationSequence: currentState.agentNotificationSequence,
     ...sharedState,
   };
 }

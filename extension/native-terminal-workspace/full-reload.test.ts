@@ -18,6 +18,12 @@ describe("shouldSkipSessionForGroupFullReload", () => {
     );
   });
 
+  test("should skip sessions waiting for user input", () => {
+    expect(shouldSkipSessionForGroupFullReload({ activity: "waiting", isSleeping: false })).toBe(
+      true,
+    );
+  });
+
   test("should skip sessions with a done indicator", () => {
     expect(shouldSkipSessionForGroupFullReload({ activity: "attention", isSleeping: false })).toBe(
       true,

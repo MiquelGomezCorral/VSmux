@@ -1,7 +1,7 @@
 import type { SidebarSessionItem } from "../shared/session-grid-contract";
 
 export type GroupSessionSummary = {
-  indicatorActivity: "attention" | "working" | undefined;
+  indicatorActivity: "attention" | "waiting" | "working" | undefined;
 };
 
 export function getGroupSessionSummary(
@@ -9,8 +9,14 @@ export function getGroupSessionSummary(
 ): GroupSessionSummary {
   let hasWorking = false;
   let hasAttention = false;
+  let hasWaiting = false;
 
   for (const session of sessions) {
+    if (session.activity === "waiting") {
+      hasWaiting = true;
+      continue;
+    }
+
     if (session.activity === "working") {
       hasWorking = true;
       continue;
@@ -21,7 +27,13 @@ export function getGroupSessionSummary(
     }
   }
 
-  return {
-    indicatorActivity: hasAttention ? "attention" : hasWorking ? "working" : undefined,
-  };
+  if (hasWaiting) {
+    return { indicatorActivity: "waiting" };
+  }
+
+  if (hasAttention) {
+    return { indicatorActivity: "attention" };
+  }
+
+  return { indicatorActivity: hasWorking ? "working" : undefined };
 }

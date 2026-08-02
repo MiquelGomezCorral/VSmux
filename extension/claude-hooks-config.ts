@@ -7,6 +7,12 @@ const CLAUDE_HOOK_EVENT_NAMES = [
   "UserPromptSubmit",
   "Stop",
   "StopFailure",
+  "PreToolUse",
+  "PostToolUse",
+  "PostToolUseFailure",
+  "PermissionDenied",
+  "Elicitation",
+  "ElicitationResult",
   "Notification",
 ] as const;
 

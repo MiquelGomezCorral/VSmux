@@ -2,11 +2,18 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import { getVisibleTerminalTitle } from "../shared/session-grid-contract";
-import type { TerminalAgentStatus } from "../shared/terminal-host-protocol";
+import type {
+  TerminalAgentNotificationKind,
+  TerminalAgentStatus,
+  TerminalAgentStatusSource,
+} from "../shared/terminal-host-protocol";
 
 export type PersistedSessionState = {
   agentName?: string;
+  agentNotificationKind?: TerminalAgentNotificationKind;
+  agentNotificationSequence?: number;
   agentStatus: TerminalAgentStatus;
+  agentStatusSource?: TerminalAgentStatusSource;
   agentSessionId?: string;
   /**
    * CDXC:Terminal-cwd 2026-07-29-21:45
@@ -35,7 +42,10 @@ export type PersistedTerminalSleepHistory = {
 
 const DEFAULT_PERSISTED_SESSION_STATE: PersistedSessionState = {
   agentName: undefined,
+  agentNotificationKind: undefined,
+  agentNotificationSequence: undefined,
   agentStatus: "idle",
+  agentStatusSource: undefined,
   agentSessionId: undefined,
   cwd: undefined,
   frozenAt: undefined,
@@ -61,7 +71,10 @@ export function createDefaultPersistedSessionState(): PersistedSessionState {
 
 export function parsePersistedSessionState(rawState: string): PersistedSessionState {
   let agentName: string | undefined;
+  let agentNotificationKind: TerminalAgentNotificationKind | undefined;
+  let agentNotificationSequence: number | undefined;
   let agentStatus: TerminalAgentStatus = "idle";
+  let agentStatusSource: TerminalAgentStatusSource | undefined;
   let agentSessionId: string | undefined;
   let cwd: string | undefined;
   let frozenAt: string | undefined;
@@ -78,6 +91,17 @@ export function parsePersistedSessionState(rawState: string): PersistedSessionSt
     const value = rawValue.trim();
     if (key === "agent") {
       agentName = value || undefined;
+    }
+    if (key === "statusSource") {
+      agentStatusSource = value === "structured" || value === "title" ? value : undefined;
+    }
+    if (key === "notificationKind") {
+      agentNotificationKind = value === "waiting" || value === "completion" ? value : undefined;
+    }
+    if (key === "notificationSequence") {
+      const parsedSequence = Number(value);
+      agentNotificationSequence =
+        Number.isSafeInteger(parsedSequence) && parsedSequence > 0 ? parsedSequence : undefined;
     }
     if (key === "agentSessionId") {
       agentSessionId = normalizePersistedSessionValue(value);
@@ -103,7 +127,10 @@ export function parsePersistedSessionState(rawState: string): PersistedSessionSt
     if (key === "autoTitleFromFirstPrompt") {
       hasAutoTitleFromFirstPrompt = value === "1" || /^true$/i.test(value) ? true : undefined;
     }
-    if (key === "status" && (value === "idle" || value === "working" || value === "attention")) {
+    if (
+      key === "status" &&
+      (value === "idle" || value === "working" || value === "waiting" || value === "attention")
+    ) {
       agentStatus = value;
     }
     if (key === "shellPromptIdle") {
@@ -118,7 +145,10 @@ export function parsePersistedSessionState(rawState: string): PersistedSessionSt
 
   return {
     agentName,
+    agentNotificationKind,
+    agentNotificationSequence,
     agentStatus,
+    agentStatusSource,
     agentSessionId,
     ...(cwd ? { cwd } : {}),
     frozenAt,
@@ -135,6 +165,9 @@ export function serializePersistedSessionState(state: PersistedSessionState): st
   return [
     `status=${state.agentStatus}`,
     `agent=${normalizePersistedSessionValue(state.agentName) ?? ""}`,
+    `statusSource=${state.agentStatusSource ?? ""}`,
+    `notificationKind=${state.agentNotificationKind ?? ""}`,
+    `notificationSequence=${state.agentNotificationSequence ?? ""}`,
     `agentSessionId=${normalizePersistedSessionValue(state.agentSessionId) ?? ""}`,
     `cwd=${normalizePersistedWorkingDirectory(state.cwd) ?? ""}`,
     `frozenAt=${normalizePersistedTimestamp(state.frozenAt) ?? ""}`,
@@ -154,7 +187,10 @@ export function haveSamePersistedSessionState(
 ): boolean {
   return (
     left.agentName === right.agentName &&
+    left.agentNotificationKind === right.agentNotificationKind &&
+    left.agentNotificationSequence === right.agentNotificationSequence &&
     left.agentStatus === right.agentStatus &&
+    left.agentStatusSource === right.agentStatusSource &&
     left.agentSessionId === right.agentSessionId &&
     left.cwd === right.cwd &&
     left.frozenAt === right.frozenAt &&
@@ -323,14 +359,16 @@ export async function updatePersistedSessionStateFile(
   filePath: string,
   updater: (state: PersistedSessionState) => PersistedSessionState,
 ): Promise<PersistedSessionState> {
-  const currentState = await readPersistedSessionStateFromFile(filePath);
-  const nextState = updater(currentState);
-  if (haveSamePersistedSessionState(currentState, nextState)) {
-    return currentState;
-  }
+  return withPersistedSessionStateLock(filePath, async () => {
+    const currentState = await readPersistedSessionStateFromFile(filePath);
+    const nextState = updater(currentState);
+    if (haveSamePersistedSessionState(currentState, nextState)) {
+      return currentState;
+    }
 
-  await writePersistedSessionStateToFile(filePath, nextState);
-  return nextState;
+    await writePersistedSessionStateToFile(filePath, nextState);
+    return nextState;
+  });
 }
 
 export async function deletePersistedSessionStateFile(filePath: string): Promise<void> {
@@ -372,6 +410,42 @@ function normalizePersistedTimestamp(value: string | undefined): string | undefi
 
   const timestampMs = Date.parse(normalizedValue);
   return Number.isFinite(timestampMs) ? new Date(timestampMs).toISOString() : undefined;
+}
+
+async function withPersistedSessionStateLock<T>(
+  filePath: string,
+  callback: () => Promise<T>,
+): Promise<T> {
+  /**
+   * CDXC:Agent-notifications 2026-07-31-14:30
+   * Hook runners and daemon title handlers are separate processes, so session
+   * state read-modify-write updates need a tiny file lock to preserve blocker
+   * and completion notification revisions.
+   */
+  const lockPath = `${filePath}.lock`;
+  await mkdir(path.dirname(lockPath), { recursive: true });
+  for (;;) {
+    try {
+      await writeFile(lockPath, String(process.pid), { flag: "wx" });
+      break;
+    } catch (error) {
+      if (!isExistingFileError(error)) {
+        throw error;
+      }
+      const lockStat = await stat(lockPath).catch(() => undefined);
+      if (lockStat && Date.now() - lockStat.mtimeMs > 5_000) {
+        await rm(lockPath, { force: true });
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
+  try {
+    return await callback();
+  } finally {
+    await rm(lockPath, { force: true }).catch(() => undefined);
+  }
 }
 
 async function cleanupPersistedSessionHookDedupMarkers(

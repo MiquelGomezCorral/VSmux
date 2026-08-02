@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { WebSocket, type RawData } from "ws";
+import type { TerminalAgentStatus } from "../shared/terminal-host-protocol";
 
 const AGENT_MANAGER_X_BRIDGE_URL = "ws://127.0.0.1:47652/vsmux";
 const INITIAL_RECONNECT_DELAY_MS = 1_000;
@@ -8,7 +9,7 @@ const MAX_RECONNECT_DELAY_MS = 5_000;
 
 export type AgentManagerXSessionKind = "terminal" | "t3";
 
-export type AgentManagerXSessionStatus = "idle" | "working" | "attention";
+export type AgentManagerXSessionStatus = TerminalAgentStatus;
 
 export type AgentManagerXSessionSource = "vsmux" | "zmux";
 

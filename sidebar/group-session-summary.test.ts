@@ -26,6 +26,18 @@ describe("getGroupSessionSummary", () => {
     });
   });
 
+  test("should prioritize purple waiting sessions over other indicators", () => {
+    expect(
+      getGroupSessionSummary([
+        createSession("session-1", { activity: "working", lifecycleState: "running" }),
+        createSession("session-2", { activity: "attention", lifecycleState: "done" }),
+        createSession("session-3", { activity: "waiting", lifecycleState: "running" }),
+      ]),
+    ).toEqual({
+      indicatorActivity: "waiting",
+    });
+  });
+
   test("should ignore idle, sleeping, and error sessions", () => {
     expect(
       getGroupSessionSummary([

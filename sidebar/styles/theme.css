@@ -20,6 +20,9 @@
   --attention-primary: color-mix(in srgb, #5ea0ff 68%, #2f6feb 32%);
   --attention-secondary: color-mix(in srgb, #9dcbff 62%, #184896 38%);
   --attention-dot: #63e58f;
+  --waiting-primary: color-mix(in srgb, #b47cff 76%, #6a42c2 24%);
+  --waiting-secondary: color-mix(in srgb, #d1b2ff 72%, #865bd2 28%);
+  --waiting-dot: #b47cff;
 }
 
 body:not([data-sidebar-theme]),

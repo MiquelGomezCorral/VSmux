@@ -1,0 +1,28 @@
+{
+  "name": "vsmux-local-audio",
+  "displayName": "VSmux Local Audio",
+  "version": "5.1.3",
+  "private": true,
+  "publisher": "maddada",
+  "description": "Local audio transport for VSmux remote notifications.",
+  "categories": ["Other"],
+  "main": "./out/local-audio/extension.js",
+  "api": "none",
+  "extensionKind": ["ui"],
+  "activationEvents": ["onCommand:VSmuxLocalAudio.playNotificationSound"],
+  "scripts": {
+    "vscode:prepublish": "node ../scripts/build-local-audio.mjs"
+  },
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "VSmuxLocalAudio.playNotificationSound",
+        "title": "VSmux Local Audio: Play Notification Sound"
+      }
+    ]
+  },
+  "files": ["out/local-audio/**/*.js", "out/shared/**/*.js", "media/sounds/**", "bin/**"]
+}

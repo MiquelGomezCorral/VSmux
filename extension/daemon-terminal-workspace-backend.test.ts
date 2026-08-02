@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from "vite-plus/test";
 import { createDisconnectedSessionSnapshot } from "./terminal-workspace-environment";
 import {
   applyPersistedSessionStateToDisconnectedSnapshot,
-  createPersistedSessionActivityChange,
+  createSessionNotificationActivityChange,
   DaemonTerminalWorkspaceBackend,
   getSessionSnapshotPollIntervalMs,
   hasMeaningfulAgentPresentationChange,
@@ -77,29 +77,27 @@ describe("hasMeaningfulAgentPresentationChange", () => {
   });
 });
 
-describe("createPersistedSessionActivityChange", () => {
-  test("should mark completion activity when persisted state is attention", () => {
-    expect(
-      createPersistedSessionActivityChange("session-00", {
-        agentName: "opencode",
-        agentStatus: "attention",
-      }),
-    ).toEqual({
-      didComplete: true,
-      sessionId: "session-00",
-    });
-  });
+describe("createSessionNotificationActivityChange", () => {
+  test("should emit a notification only for a new notification sequence", () => {
+    const previous = createDisconnectedSessionSnapshot("session-00", "workspace-1");
+    const next = {
+      ...previous,
+      agentNotificationKind: "waiting" as const,
+      agentNotificationSequence: 1,
+      agentStatus: "waiting" as const,
+      agentStatusSource: "structured" as const,
+    };
 
-  test("should leave non-completion activity unmarked", () => {
-    expect(
-      createPersistedSessionActivityChange("session-00", {
-        agentName: "opencode",
-        agentStatus: "working",
-      }),
-    ).toEqual({
-      didComplete: false,
+    expect(createSessionNotificationActivityChange(previous, next)).toEqual({
+      kind: "waiting",
+      notificationId: "structured:1:waiting",
       sessionId: "session-00",
     });
+    expect(
+      createSessionNotificationActivityChange(next, {
+        ...next,
+      }),
+    ).toBeUndefined();
   });
 });
 

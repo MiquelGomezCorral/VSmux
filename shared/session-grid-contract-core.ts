@@ -14,7 +14,7 @@ export type TerminalViewMode = "horizontal" | "vertical" | "grid";
 
 export type SessionGridDirection = "up" | "right" | "down" | "left";
 
-export type SidebarSessionActivityState = "idle" | "working" | "attention";
+export type SidebarSessionActivityState = "idle" | "working" | "waiting" | "attention";
 export type SessionLifecycleState = "running" | "done" | "sleeping" | "error";
 /**
  * CDXC:SessionTitleSync 2026-04-28-16:14

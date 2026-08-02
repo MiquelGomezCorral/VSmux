@@ -73,6 +73,19 @@ describe("detectCodexLifecycleEventFromLogLine", () => {
     expect(eventType).toBe("stop");
   });
 
+  test("should detect recorded Codex input requests and replies", () => {
+    expect(
+      detectCodexLifecycleEventFromLogLine(
+        '{"ts":"2026-07-31T14:11:00.000Z","dir":"to_tui","kind":"app_event","variant":"RequestUserInput"}',
+      ),
+    ).toBe("waiting");
+    expect(
+      detectCodexLifecycleEventFromLogLine(
+        '{"ts":"2026-07-31T14:11:01.000Z","dir":"from_tui","kind":"op","payload":{"UserInputAnswer":{"id":"call-1"}}}',
+      ),
+    ).toBe("resume");
+  });
+
   test("should ignore unrelated Codex session log lines", () => {
     const eventType = detectCodexLifecycleEventFromLogLine(
       '{"timestamp":"2026-03-02T22:59:37.052Z","type":"event_msg","payload":{"type":"agent_reasoning","text":"thinking"}}',
@@ -129,7 +142,18 @@ describe("getClaudeHookSettingsContent", () => {
             type: "command",
           },
         ],
-        matcher: "permission_prompt|idle_prompt",
+        matcher: "permission_prompt",
+      },
+    ]);
+    expect(settings.hooks.PreToolUse).toEqual([
+      {
+        hooks: [
+          {
+            command: "'/tmp/vsmux-notify.sh'",
+            type: "command",
+          },
+        ],
+        matcher: "AskUserQuestion|ExitPlanMode",
       },
     ]);
   });
@@ -224,9 +248,11 @@ describe("getOpenCodePluginContent", () => {
 
     expect(plugin).toContain("if (isSessionActive(status)) {");
     expect(plugin).toContain('if (event.type === "session.busy") {');
-    expect(plugin).toContain(
-      'if (event.type === "session.idle" || event.type === "session.error") {',
-    );
+    expect(plugin).toContain('if (event.type === "session.idle") {');
+    expect(plugin).toContain('if (event.type === "session.error") {');
+    expect(plugin).toContain("if (waitingRequestIds.size > 0) {");
+    expect(plugin).toContain('event.type === "permission.asked" || event.type === "question.asked"');
+    expect(plugin).toContain('event.type === "permission.replied" ||');
   });
 });
 

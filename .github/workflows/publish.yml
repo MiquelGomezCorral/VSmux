@@ -1,0 +1,143 @@
+name: Publish Extensions
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build-local-audio:
+    name: Build local audio (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: darwin-arm64
+            runner: macos-15
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: win32-x64
+            runner: windows-2025
+            msvcArch: x64
+          - target: win32-arm64
+            runner: windows-11-arm
+            msvcArch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - if: matrix.msvcArch
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvcArch }}
+      - run: pnpm run build:local-audio
+      # CDXC:Agent-notifications 2026-08-02-13:06 VSCE writes directly to the
+      # requested output path, so each platform job must create the shared
+      # artifact directory before packaging its companion VSIX.
+      - name: Create artifact directory
+        run: node -e "require('node:fs').mkdirSync('artifacts', { recursive: true })"
+      - name: Package local audio
+        working-directory: local-audio
+        run: >-
+          pnpm exec vsce package --no-dependencies --skip-license
+          --allow-unused-files-pattern --target ${{ matrix.target }}
+          --out ../artifacts/vsmux-local-audio-${{ matrix.target }}.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-audio-${{ matrix.target }}
+          path: artifacts/vsmux-local-audio-${{ matrix.target }}.vsix
+
+  build-vsmux:
+    name: Build VSmux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Require managed T3 source
+        run: >-
+          test -n "$T3CODE_EMBED_REPOSITORY" ||
+          { echo "Set the T3CODE_EMBED_REPOSITORY repository variable before publishing."; exit 1; }
+        env:
+          T3CODE_EMBED_REPOSITORY: ${{ vars.T3CODE_EMBED_REPOSITORY }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.T3CODE_EMBED_REPOSITORY }}
+          ref: ${{ vars.T3CODE_EMBED_REF || 'main' }}
+          path: t3code-embed
+          token: ${{ secrets.T3CODE_EMBED_TOKEN || github.token }}
+      # CDXC:Agent-notifications 2026-08-02-13:06 VSCE writes directly to the
+      # requested output path, so the VSmux build job must create its artifact
+      # directory before packaging.
+      - name: Create artifact directory
+        run: node -e "require('node:fs').mkdirSync('artifacts', { recursive: true })"
+      - name: Package VSmux
+        run: >-
+          pnpm exec vsce package --no-dependencies --skip-license
+          --allow-unused-files-pattern --out artifacts/VSmux.vsix
+        env:
+          VSMUX_T3CODE_REPO_ROOT: ${{ github.workspace }}/t3code-embed
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsmux
+          path: artifacts/VSmux.vsix
+
+  publish:
+    name: Publish Marketplace extensions
+    needs: [build-local-audio, build-vsmux]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify release versions
+        run: |
+          test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./package.json').version")"
+          test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./local-audio/package.json').version")"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: local-audio-*
+          path: artifacts/local-audio
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsmux
+          path: artifacts/vsmux
+      # CDXC:Agent-notifications 2026-08-02-12:11 Publish every local UI target
+      # before VSmux so its remote extension dependency resolves on first install.
+      - name: Publish local audio companions
+        run: |
+          for vsix in artifacts/local-audio/*.vsix; do
+            pnpm exec vsce publish --packagePath "$vsix"
+          done
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      - name: Publish VSmux
+        run: pnpm exec vsce publish --packagePath artifacts/vsmux/VSmux.vsix
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}

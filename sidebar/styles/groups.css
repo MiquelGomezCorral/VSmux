@@ -450,6 +450,10 @@
   animation: session-status-dot-pulse 1.35s ease-in-out infinite;
 }
 
+.group-collapsed-summary[data-activity="waiting"] .session-status-dot {
+  --session-status-dot-color: var(--waiting-dot);
+}
+
 .group-collapsed-summary[data-activity="attention"] .session-status-dot {
   --session-status-dot-color: var(--attention-dot);
 }

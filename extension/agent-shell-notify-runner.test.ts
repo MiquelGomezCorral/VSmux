@@ -68,6 +68,31 @@ describe("getAgentHookInfo", () => {
       turnId: undefined,
     });
   });
+
+  test("normalizes structured Claude blockers without treating idle notices as blockers", () => {
+    expect(
+      getAgentHookInfo(
+        JSON.stringify({
+          agent: "claude",
+          hook_event_name: "Notification",
+          notification_type: "permission_prompt",
+        }),
+      ),
+    ).toMatchObject({
+      agentName: "claude",
+      normalizedEvent: "waiting",
+      notificationType: "permission_prompt",
+    });
+    expect(
+      getAgentHookInfo(
+        JSON.stringify({
+          agent: "claude",
+          hook_event_name: "Notification",
+          notification_type: "idle_prompt",
+        }),
+      ).normalizedEvent,
+    ).toBeUndefined();
+  });
 });
 
 describe("getHookResponseForInput", () => {
@@ -232,6 +257,56 @@ describe("resolvePersistedSessionStateForHook", () => {
 
     expect(startState.agentStatus).toBe("working");
     expect(stopState.agentStatus).toBe("attention");
+  });
+
+  test("returns a waiting session to working after its structured reply", () => {
+    const waitingState = resolvePersistedSessionStateForHook(
+      {
+        agentName: "claude",
+        agentStatus: "working",
+        title: "Claude Code",
+      },
+      {
+        agentName: "claude",
+        normalizedEvent: "waiting",
+      },
+    );
+    const resumedState = resolvePersistedSessionStateForHook(waitingState, {
+      agentName: "claude",
+      normalizedEvent: "resume",
+    });
+
+    expect(waitingState.agentStatus).toBe("waiting");
+    expect(waitingState.agentStatusSource).toBe("structured");
+    expect(resumedState.agentStatus).toBe("working");
+    expect(resumedState.agentStatusSource).toBe("structured");
+  });
+
+  test("mints one notification for repeated waiting and another for completion", () => {
+    const waitingState = resolvePersistedSessionStateForHook(
+      {
+        agentName: "claude",
+        agentStatus: "working",
+      },
+      {
+        agentName: "claude",
+        normalizedEvent: "waiting",
+      },
+    );
+    const repeatedWaitingState = resolvePersistedSessionStateForHook(waitingState, {
+      agentName: "claude",
+      normalizedEvent: "waiting",
+    });
+    const completionState = resolvePersistedSessionStateForHook(repeatedWaitingState, {
+      agentName: "claude",
+      normalizedEvent: "stop",
+    });
+
+    expect(waitingState.agentNotificationKind).toBe("waiting");
+    expect(waitingState.agentNotificationSequence).toBe(1);
+    expect(repeatedWaitingState.agentNotificationSequence).toBe(1);
+    expect(completionState.agentNotificationKind).toBe("completion");
+    expect(completionState.agentNotificationSequence).toBe(2);
   });
 
   test("ignores prompt submit hooks from a different Codex session id", () => {

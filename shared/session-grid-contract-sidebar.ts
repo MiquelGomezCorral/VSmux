@@ -11,9 +11,11 @@ import type { SidebarPinnedPrompt } from "./sidebar-pinned-prompts";
 import type {
   SessionLifecycleState,
   SessionGridSnapshot,
+  SidebarSessionActivityState,
   TerminalViewMode,
   VisibleSessionCount,
 } from "./session-grid-contract-core";
+import type { TerminalAgentStatus } from "./terminal-host-protocol";
 
 export type SidebarCollapsibleSection = "actions" | "agents";
 
@@ -50,7 +52,7 @@ export function createDefaultSidebarSectionCollapseState(): SidebarSectionCollap
 export type SidebarSessionItem = {
   kind?: "browser" | "workspace";
   sessionKind?: "browser" | "terminal" | "t3";
-  activity: "idle" | "working" | "attention";
+  activity: SidebarSessionActivityState;
   activityLabel?: string;
   agentIcon?: SidebarAgentIcon;
   isGeneratingFirstPromptTitle?: boolean;
@@ -195,12 +197,6 @@ export type SidebarSessionPresentationChangedMessage = {
   type: "sessionPresentationChanged";
 };
 
-export type SidebarPlayCompletionSoundMessage = {
-  sound: CompletionSoundSetting;
-  sessionId?: string;
-  type: "playCompletionSound";
-};
-
 /**
  * CDXC:CompletionSound 2026-07-31-15:41
  * An effective completion-sound setting change updates only its selected sound.
@@ -246,7 +242,7 @@ export type SidebarDaemonInfo = {
 
 export type SidebarDaemonSessionItem = {
   agentName?: string;
-  agentStatus: "idle" | "working" | "attention";
+  agentStatus: TerminalAgentStatus;
   cols: number;
   cwd: string;
   endedAt?: string;
@@ -279,7 +275,7 @@ export type SidebarT3ServerInfo = {
 };
 
 export type SidebarT3SessionItem = {
-  activity: "idle" | "working" | "attention";
+  activity: SidebarSessionActivityState;
   detail?: string;
   isCurrentWorkspace: boolean;
   isFocused: boolean;
@@ -320,7 +316,6 @@ export type ExtensionToSidebarMessage =
   | SidebarHydrateMessage
   | SidebarSessionStateMessage
   | SidebarSessionPresentationChangedMessage
-  | SidebarPlayCompletionSoundMessage
   | SidebarCompletionSoundChangedMessage
   | SidebarOrderSyncResultMessage
   | SidebarCommandRunStateChangedMessage

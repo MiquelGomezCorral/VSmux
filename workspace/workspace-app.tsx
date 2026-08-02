@@ -245,13 +245,17 @@ const summarizeTerminalLayerState = (
 
 function getWorkspacePaneHeaderIndicatorState(
   pane: WorkspacePanelPane,
-): SessionLifecycleState | undefined {
+): SessionLifecycleState | "waiting" | undefined {
   if (pane.lifecycleState === "error") {
     return "error";
   }
 
   if (pane.activity === "working") {
     return "running";
+  }
+
+  if (pane.activity === "waiting") {
+    return "waiting";
   }
 
   if (pane.activity === "attention") {

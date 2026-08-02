@@ -766,6 +766,10 @@ body {
   animation: workspace-pane-title-indicator-pulse 1.35s ease-in-out infinite;
 }
 
+.workspace-pane-title-indicator[data-lifecycle-state="waiting"] {
+  --workspace-pane-title-indicator-color: #b47cff;
+}
+
 .workspace-pane-title-indicator[data-lifecycle-state="error"] {
   --workspace-pane-title-indicator-color: #ff6b6b;
 }

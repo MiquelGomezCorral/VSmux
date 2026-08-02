@@ -1,6 +1,6 @@
 import { findOscTerminator, matchesLogPattern } from "./agent-shell-integration-utils";
 
-type AgentLifecycleEventType = "start" | "stop";
+type AgentLifecycleEventType = "start" | "stop" | "waiting" | "resume";
 
 export type AgentLifecycleEvent = {
   agentName?: string;
@@ -19,11 +19,34 @@ const CODEX_START_LOG_PATTERNS = [
   [`"type":"event_msg"`, `"payload":{"type":"task_started"`],
   [`"msg":{"type":"task_started"`],
   [`"msg":{"type":"exec_command_begin"`],
+  [`"dir":"to_tui"`, `"kind":"app_event"`, `"variant":"TaskStarted"`],
 ] as const;
 const CODEX_STOP_LOG_PATTERNS = [
   [`"type":"event_msg"`, `"payload":{"type":"task_complete"`],
   [`"msg":{"type":"task_complete"`],
   [`"msg":{"type":"turn_aborted"`],
+  [`"dir":"to_tui"`, `"kind":"app_event"`, `"variant":"TaskComplete"`],
+] as const;
+/**
+ * CDXC:Agent-input-waiting 2026-07-31-14:11
+ * Codex TUI recording is the structured source for approval and question
+ * blockers. It deliberately ignores text rendered by the agent itself.
+ */
+const CODEX_WAIT_LOG_PATTERNS = [
+  [`"dir":"to_tui"`, `"kind":"app_event"`, `"variant":"ExecApprovalRequest"`],
+  [`"dir":"to_tui"`, `"kind":"app_event"`, `"variant":"ApplyPatchApprovalRequest"`],
+  [`"dir":"to_tui"`, `"kind":"app_event"`, `"variant":"RequestUserInput"`],
+  [`"payload":{"type":"exec_approval_request"`],
+  [`"payload":{"type":"apply_patch_approval_request"`],
+  [`"payload":{"type":"request_user_input"`],
+  [`"msg":{"type":"exec_approval_request"`],
+  [`"msg":{"type":"apply_patch_approval_request"`],
+  [`"msg":{"type":"request_user_input"`],
+] as const;
+const CODEX_RESUME_LOG_PATTERNS = [
+  [`"dir":"from_tui"`, `"kind":"op"`, `"payload":{"ExecApproval"`],
+  [`"dir":"from_tui"`, `"kind":"op"`, `"payload":{"PatchApproval"`],
+  [`"dir":"from_tui"`, `"kind":"op"`, `"payload":{"UserInputAnswer"`],
 ] as const;
 
 export function parseAgentControlChunk(data: string): ParsedAgentControlChunk {
@@ -79,6 +102,14 @@ export function detectCodexLifecycleEventFromLogLine(
     return "stop";
   }
 
+  if (matchesLogPattern(line, CODEX_WAIT_LOG_PATTERNS)) {
+    return "waiting";
+  }
+
+  if (matchesLogPattern(line, CODEX_RESUME_LOG_PATTERNS)) {
+    return "resume";
+  }
+
   return undefined;
 }
 
@@ -111,6 +142,11 @@ function normalizeLifecycleEventType(
       return "start";
     case "stop":
       return "stop";
+    case "wait":
+    case "waiting":
+      return "waiting";
+    case "resume":
+      return "resume";
     default:
       return undefined;
   }

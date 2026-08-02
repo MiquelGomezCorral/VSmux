@@ -1152,8 +1152,12 @@ function createSessionGroupDebugInstanceId(): number {
 }
 
 function getCollapsedSummaryLabel(
-  indicatorActivity: "attention" | "working" | undefined,
+  indicatorActivity: "attention" | "waiting" | "working" | undefined,
 ): string | undefined {
+  if (indicatorActivity === "waiting") {
+    return "Group has sessions waiting for input";
+  }
+
   if (indicatorActivity === "attention") {
     return "Group has completed sessions";
   }

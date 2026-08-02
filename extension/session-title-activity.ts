@@ -26,6 +26,12 @@ const CODEX_TITLE_KEYWORD = "codex";
 const CODEX_WORKING_MARKERS = ["⠸", "⠴", "⠼", "⠧", "⠦", "⠏", "⠋", "⠇", "⠙", "⠹"] as const;
 const GEMINI_WORKING_MARKER = "✦";
 const GEMINI_IDLE_MARKER = "◇";
+/**
+ * CDXC:Agent-input-waiting 2026-07-31-14:11
+ * Gemini emits this native title state only for action-required prompts, so it
+ * is the structured source for the purple waiting indicator when titles stay enabled.
+ */
+const GEMINI_WAITING_MARKER = "✋";
 const COPILOT_WORKING_MARKER = "🤖";
 const COPILOT_IDLE_MARKER = "🔔";
 const OPENCODE_TITLE_PREFIX_PATTERN = /^[\s\u2800-\u28ff·•⋅◦✳*✦◇🤖🔔]*OC\s*\|/iu;
@@ -56,10 +62,21 @@ export function getTitleDerivedSessionActivity(
   const hasSeenWorking = sameAgent
     ? (previousDerivedActivity?.hasSeenWorking ?? false) ||
       previousDerivedActivity?.activity === "working" ||
+      previousDerivedActivity?.activity === "waiting" ||
       previousDerivedActivity?.activity === "attention"
     : false;
   const isAcknowledged = sameAgent ? (previousDerivedActivity?.isAcknowledged ?? false) : false;
   const lastTitleChangeAt = sameAgent ? previousDerivedActivity?.lastTitleChangeAt : undefined;
+  if (titleState.state === "waiting") {
+    return {
+      activity: "waiting",
+      agentName: titleState.agentName,
+      hasSeenWorking: true,
+      isAcknowledged: false,
+      lastTitleChangeAt,
+    };
+  }
+
   if (titleState.state === "idle") {
     return {
       activity: hasSeenWorking && !isAcknowledged ? "attention" : "idle",
@@ -111,6 +128,7 @@ export function getTitleDerivedSessionActivityFromTransition(
     const hasSeenWorking = sameAgent
       ? (previousDerivedActivity?.hasSeenWorking ?? false) ||
         previousDerivedActivity?.activity === "working" ||
+        previousDerivedActivity?.activity === "waiting" ||
         previousDerivedActivity?.activity === "attention"
       : false;
     const isAcknowledged = sameAgent ? (previousDerivedActivity?.isAcknowledged ?? false) : false;
@@ -118,12 +136,20 @@ export function getTitleDerivedSessionActivityFromTransition(
       activity:
         nextTitleState.state === "working"
           ? "working"
+          : nextTitleState.state === "waiting"
+            ? "waiting"
           : hasSeenWorking && !isAcknowledged
             ? "attention"
             : "idle",
       agentName: nextTitleState.agentName,
-      hasSeenWorking: nextTitleState.state === "working" ? true : hasSeenWorking,
-      isAcknowledged: nextTitleState.state === "working" ? false : isAcknowledged,
+      hasSeenWorking:
+        nextTitleState.state === "working" || nextTitleState.state === "waiting"
+          ? true
+          : hasSeenWorking,
+      isAcknowledged:
+        nextTitleState.state === "working" || nextTitleState.state === "waiting"
+          ? false
+          : isAcknowledged,
       lastTitleChangeAt:
         nextTitleState.state === "working"
           ? previousDerivedActivity?.agentName === nextTitleState.agentName &&
@@ -188,7 +214,10 @@ function getTitleState(
   title: string,
   knownAgentName?: string,
 ):
-  | { agentName: "claude" | "codex" | "copilot" | "gemini" | "opencode"; state: "idle" | "working" }
+  | {
+      agentName: "claude" | "codex" | "copilot" | "gemini" | "opencode";
+      state: "idle" | "working" | "waiting";
+    }
   | undefined {
   const normalizedAgentName = normalizeKnownAgentName(knownAgentName);
   const normalizedTitle = title.trim().replace(/\s+/g, " ");
@@ -319,16 +348,21 @@ function getCodexTitleState(
 function getGeminiTitleState(
   title: string,
   allowAgentHintMatch = false,
-): "idle" | "working" | undefined {
+): "idle" | "working" | "waiting" | undefined {
   const normalizedTitle = title.trim().replace(/\s+/g, " ");
   const lowerTitle = normalizedTitle.toLowerCase();
   if (
     !allowAgentHintMatch &&
     !lowerTitle.includes("gemini") &&
     !normalizedTitle.includes(GEMINI_WORKING_MARKER) &&
-    !normalizedTitle.includes(GEMINI_IDLE_MARKER)
+    !normalizedTitle.includes(GEMINI_IDLE_MARKER) &&
+    !normalizedTitle.includes(GEMINI_WAITING_MARKER)
   ) {
     return undefined;
+  }
+
+  if (normalizedTitle.includes(GEMINI_WAITING_MARKER)) {
+    return "waiting";
   }
 
   if (normalizedTitle.includes(GEMINI_WORKING_MARKER)) {

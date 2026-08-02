@@ -31,7 +31,6 @@ import {
 import { isGenericAgentSessionTitle } from "./first-prompt-session-title";
 import {
   resolvePresentedSessionTitle,
-  resolvePersistedSessionPresentationState,
   shouldPreferPersistedSessionPresentation,
 } from "./terminal-daemon-session-state";
 import { appendFirstPromptAutoRenameReproLog } from "./first-prompt-auto-rename-repro-log";
@@ -117,6 +116,7 @@ type ManagedSession = {
    * events so no input is accepted after the terminal has begun stopping.
    */
   isStopping: boolean;
+  nextAgentNotificationSequence: number;
   pendingAttachQueues: PendingAttachQueue[];
   serializeAddon?: SerializeAddon;
   /**
@@ -590,6 +590,7 @@ async function handleAcknowledgeAttentionRequest(
       await updatePersistedSessionStateFile(session.sessionStateFilePath, (currentState) => ({
         ...currentState,
         agentStatus: "idle",
+        agentStatusSource: "structured",
       }));
     }
     const snapshot = await buildSnapshot(session, false);
@@ -659,6 +660,7 @@ async function createSession(request: TerminalHostCreateOrAttachRequest): Promis
     historyBuffer,
     isStopping: false,
     liveTitle: undefined,
+    nextAgentNotificationSequence: 1,
     pendingAttachQueues: [],
     pty: spawnedPty,
     rows: request.rows,
@@ -672,6 +674,7 @@ async function createSession(request: TerminalHostCreateOrAttachRequest): Promis
     snapshot: {
       agentName: undefined,
       agentStatus: "idle",
+      agentStatusSource: undefined,
       cols: request.cols,
       cwd: request.cwd,
       frontendAttachmentGeneration: 0,
@@ -798,14 +801,32 @@ async function buildSnapshot(
   session.lastKnownPersistedTitle = persistedState.title;
   const shouldPreferPersistedPresentation =
     shouldPreferPersistedSessionPresentation(persistedState);
+  session.nextAgentNotificationSequence = Math.max(
+    session.nextAgentNotificationSequence,
+    (persistedState.agentNotificationSequence ?? 0) + 1,
+  );
+  const titleActivityStatus = session.titleActivity?.activity;
+  const snapshotAgentStatus = shouldPreferPersistedPresentation
+    ? persistedState.agentStatus
+    : (titleActivityStatus ?? persistedState.agentStatus);
+  const snapshotAgentStatusSource = shouldPreferPersistedPresentation
+    ? persistedState.agentStatusSource
+    : titleActivityStatus
+      ? "title"
+      : persistedState.agentStatusSource;
   session.snapshot = {
     ...session.snapshot,
     agentName: shouldPreferPersistedPresentation
       ? (persistedState.agentName ?? session.snapshot.agentName)
       : (session.titleActivity?.agentName ?? persistedState.agentName),
-    agentStatus: shouldPreferPersistedPresentation
-      ? persistedState.agentStatus
-      : (session.titleActivity?.activity ?? persistedState.agentStatus),
+    agentStatus: snapshotAgentStatus,
+    agentStatusSource: snapshotAgentStatusSource,
+    agentNotificationKind: shouldPreferPersistedPresentation
+      ? persistedState.agentNotificationKind
+      : session.snapshot.agentNotificationKind,
+    agentNotificationSequence: shouldPreferPersistedPresentation
+      ? persistedState.agentNotificationSequence
+      : session.snapshot.agentNotificationSequence,
     cwd: shellState.state.cwd ?? session.snapshot.cwd,
     frontendAttachmentGeneration: session.frontendAttachmentGeneration,
     history: includeHistory ? serializeSessionHistory(session) : undefined,
@@ -818,6 +839,7 @@ async function buildSnapshot(
           liveTitle: session.liveTitle,
           snapshotAgentName: session.snapshot.agentName,
           snapshotAgentStatus: session.snapshot.agentStatus,
+          snapshotAgentStatusSource: session.snapshot.agentStatusSource,
           titleActivityAgentName: session.titleActivity?.agentName,
           titleActivityStatus: session.titleActivity?.activity,
         }),
@@ -938,6 +960,11 @@ async function handleSessionSocketMessage(
  */
 function markSessionShellPromptBusy(session: ManagedSession): void {
   session.lastShellInputAtMs = Date.now();
+  /**
+   * CDXC:Agent-input-waiting 2026-07-31-14:30
+   * Ordinary PTY input reaches shells and TUIs too broadly to prove a blocker
+   * was answered; only structured resume/finish events may clear waiting.
+   */
   if (session.snapshot.isShellPromptIdle !== true) {
     return;
   }
@@ -1236,37 +1263,6 @@ async function persistSessionLiveTitle(session: ManagedSession, title: string): 
   session.lastKnownPersistedTitle = persistedState.title;
 }
 
-async function persistSessionPresentationState(session: ManagedSession): Promise<void> {
-  const persistedState = await updatePersistedSessionStateFile(
-    session.sessionStateFilePath,
-    (currentState) => {
-      const nextState = resolvePersistedSessionPresentationState(currentState, {
-        lastKnownPersistedTitle: session.lastKnownPersistedTitle,
-        liveTitle: session.liveTitle,
-        snapshotAgentName: session.snapshot.agentName,
-        snapshotAgentStatus: session.snapshot.agentStatus,
-        titleActivityAgentName: session.titleActivity?.agentName,
-        titleActivityStatus: session.titleActivity?.activity,
-      });
-      if (
-        currentState.agentName === nextState.agentName &&
-        currentState.agentStatus === nextState.agentStatus &&
-        currentState.title === nextState.title
-      ) {
-        return currentState;
-      }
-
-      return nextState;
-    },
-  ).catch(() => undefined);
-
-  if (!persistedState) {
-    return;
-  }
-
-  session.lastKnownPersistedTitle = persistedState.title;
-}
-
 function scheduleTitleActivityRefresh(session: ManagedSession): void {
   clearTitleActivityTimer(session);
   if (
@@ -1453,13 +1449,23 @@ function applySessionTitleActivity(session: ManagedSession): void {
     return;
   }
 
+  const previousStatus = session.snapshot.agentStatus;
+  const nextStatus = session.titleActivity.activity;
+  const notificationPatch =
+    previousStatus !== nextStatus && (nextStatus === "waiting" || nextStatus === "attention")
+      ? {
+          agentNotificationKind: nextStatus === "waiting" ? ("waiting" as const) : ("completion" as const),
+          agentNotificationSequence: session.nextAgentNotificationSequence++,
+        }
+      : {};
   session.snapshot = {
     ...session.snapshot,
     agentName: session.titleActivity.agentName,
-    agentStatus: session.titleActivity.activity,
+    agentStatus: nextStatus,
+    agentStatusSource: "title",
+    ...notificationPatch,
     title: getSessionSnapshotTitle(session.liveTitle, session.lastKnownPersistedTitle),
   };
-  void persistSessionPresentationState(session);
 }
 
 function getSessionSnapshotTitle(

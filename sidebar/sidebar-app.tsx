@@ -35,7 +35,6 @@ import {
 } from "../shared/session-grid-contract";
 import { COMPLETION_SOUND_OPTIONS, type CompletionSoundSetting } from "../shared/completion-sound";
 import type { SidebarActionType } from "../shared/sidebar-commands";
-import { playCompletionSound, prepareCompletionSoundPlayback } from "./completion-sound-player";
 import { AgentsPanel } from "./agents-panel";
 import { CommandsPanel } from "./commands-panel";
 import { DaemonSessionsModal } from "./daemon-sessions-modal";
@@ -130,7 +129,6 @@ const SIDEBAR_POINTER_DRAG_REORDER_THRESHOLD_PX = 8;
 const SIDEBAR_SECTION_COLLAPSE_PERSIST_DEBOUNCE_MS = 200;
 const BROWSER_AUTO_COLLAPSE_SUPPRESSION_MS = 1_200;
 const MIN_SESSION_SEARCH_QUERY_LENGTH = 2;
-const COMPLETION_FLASH_DURATION_MS = 3_000;
 const DEBUG_BUILD_STAMP_STYLE: CSSProperties = {
   position: "fixed",
   right: "10px",
@@ -160,9 +158,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
   const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false);
   const [t3BrowserAccess, setT3BrowserAccess] =
     useState<Extract<ExtensionToSidebarMessage, { type: "showT3BrowserAccess" }>>();
-  const [completionFlashNonceBySessionId, setCompletionFlashNonceBySessionId] = useState<
-    Record<string, number>
-  >({});
   const [collapsedGroupsById, setCollapsedGroupsById] = useState<Record<string, true>>({});
   const [sessionSearchQuery, setSessionSearchQuery] = useState("");
   const [sessionDropIndicatorGroupId, setSessionDropIndicatorGroupId] = useState<string>();
@@ -182,7 +177,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
   const previousNormalizedSessionSearchQueryRef = useRef("");
   const pointerDownSessionTargetRef = useRef<SidebarPointerDownSessionTarget>();
   const sessionPointerDragStateRef = useRef<SidebarSessionPointerDragState>();
-  const completionFlashTimeoutBySessionIdRef = useRef<Map<string, number>>(new Map());
   const sectionCollapsePersistTimeoutsRef = useRef<
     Partial<Record<SidebarCollapsibleSection, number>>
   >({});
@@ -375,41 +369,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
       return;
     }
 
-    if (event.data.type === "playCompletionSound") {
-      const sessionId = event.data.sessionId;
-      postSidebarDebugLog("completionSound.messageReceived", {
-        sound: event.data.sound,
-        sessionId,
-      });
-      if (sessionId) {
-        const existingTimeout = completionFlashTimeoutBySessionIdRef.current.get(sessionId);
-        if (existingTimeout !== undefined) {
-          window.clearTimeout(existingTimeout);
-        }
-        setCompletionFlashNonceBySessionId((previous) => ({
-          ...previous,
-          [sessionId]: (previous[sessionId] ?? 0) + 1,
-        }));
-        const timeout = window.setTimeout(() => {
-          completionFlashTimeoutBySessionIdRef.current.delete(sessionId);
-          setCompletionFlashNonceBySessionId((previous) => {
-            if (!(sessionId in previous)) {
-              return previous;
-            }
-
-            const next = { ...previous };
-            delete next[sessionId];
-            return next;
-          });
-        }, COMPLETION_FLASH_DURATION_MS);
-        completionFlashTimeoutBySessionIdRef.current.set(sessionId, timeout);
-      }
-      void playCompletionSound(event.data.sound, (soundEvent, details) => {
-        postSidebarDebugLog(soundEvent, details);
-      });
-      return;
-    }
-
     if (event.data.type === "completionSoundChanged") {
       applyCompletionSoundChangedMessage(event.data);
       return;
@@ -569,11 +528,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
 
   useEffect(() => {
     return () => {
-      for (const timeout of completionFlashTimeoutBySessionIdRef.current.values()) {
-        window.clearTimeout(timeout);
-      }
-      completionFlashTimeoutBySessionIdRef.current.clear();
-
       for (const timeoutId of Object.values(sectionCollapsePersistTimeoutsRef.current)) {
         if (timeoutId !== undefined) {
           window.clearTimeout(timeoutId);
@@ -923,12 +877,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
     };
   }, [focusedSessionId]);
 
-  const unlockCompletionSoundPlayback = useEffectEvent(() => {
-    void prepareCompletionSoundPlayback((soundEvent, details) => {
-      postSidebarDebugLog(soundEvent, details);
-    });
-  });
-
   const recordPointerDownSessionTarget = useEffectEvent((event: PointerEvent) => {
     const target = event.target;
     if (!(target instanceof Element)) {
@@ -958,11 +906,9 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
   useEffect(() => {
     const handlePointerDown = (event: PointerEvent) => {
       recordPointerDownSessionTarget(event);
-      unlockCompletionSoundPlayback();
     };
     const handleKeyDown = () => {
       pointerDownSessionTargetRef.current = undefined;
-      unlockCompletionSoundPlayback();
     };
 
     window.addEventListener("pointerdown", handlePointerDown, true);
@@ -972,7 +918,7 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
       window.removeEventListener("pointerdown", handlePointerDown, true);
       window.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [recordPointerDownSessionTarget, unlockCompletionSoundPlayback]);
+  }, [recordPointerDownSessionTarget]);
 
   const updateSessionDropIndicator = useEffectEvent(
     (event: Parameters<NonNullable<DragDropEventHandlers["onDragOver"]>>[0]) => {
@@ -1607,7 +1553,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
                   {displayedBrowserGroupIds.map((groupId) => (
                     <SessionGroupSection
                       canClose={false}
-                      completionFlashNonceBySessionId={completionFlashNonceBySessionId}
                       draggingDisabled={isSessionSearchOpen}
                       groupId={groupId}
                       index={-1}
@@ -1641,7 +1586,6 @@ export function SidebarApp({ messageSource = window, vscode }: SidebarAppProps) 
                   {displayedWorkspaceGroupIds.map((groupId, groupIndex) => (
                     <SessionGroupSection
                       canClose={effectiveGroupIds.length > 1}
-                      completionFlashNonceBySessionId={completionFlashNonceBySessionId}
                       draggingDisabled={isSessionSearchOpen}
                       groupId={groupId}
                       index={groupIndex}

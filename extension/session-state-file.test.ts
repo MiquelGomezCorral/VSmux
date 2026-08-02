@@ -102,6 +102,18 @@ describe("createPersistedSessionHookDedupMarker", () => {
 });
 
 describe("persisted session title normalization", () => {
+  test("should preserve a structured waiting status", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "vsmux-session-state-"));
+    const filePath = path.join(tempDir, "session-waiting.state");
+
+    await writeFile(filePath, "status=waiting\nagent=claude\n", "utf8");
+
+    await expect(readPersistedSessionStateFromFile(filePath)).resolves.toMatchObject({
+      agentName: "claude",
+      agentStatus: "waiting",
+    });
+  });
+
   test("should strip indicators and trim when serializing titles", () => {
     expect(
       serializePersistedSessionState({

@@ -269,8 +269,7 @@ function startCodexWatcher(
   let pendingLine = "";
   let lastContentLength = 0;
   let lastSeenSessionId: string | undefined;
-  let lastStartedTurnId: string | undefined;
-  let lastStoppedTurnId: string | undefined;
+  const lastEventTurnIdByType = new Map<string, string>();
   let polling = false;
 
   const timer = setInterval(() => {
@@ -311,35 +310,25 @@ function startCodexWatcher(
             continue;
           }
 
-          const turnId = extractTurnId(line) ?? eventType;
-          if (eventType === "start") {
-            if (turnId === lastStartedTurnId) {
-              continue;
-            }
-
-            lastStartedTurnId = turnId;
-            void appendAgentShellDebugLog("wrapper.codex.watcherEvent", {
-              eventType,
-              logFilePath,
-              source: "session-log",
-              turnId,
-            });
-            emitNotifyEvent("Start", notifyRunnerPath);
+          const turnId = extractTurnId(line);
+          if (turnId && turnId === lastEventTurnIdByType.get(eventType)) {
             continue;
           }
 
-          if (turnId === lastStoppedTurnId) {
-            continue;
+          if (turnId) {
+            lastEventTurnIdByType.set(eventType, turnId);
           }
 
-          lastStoppedTurnId = turnId;
           void appendAgentShellDebugLog("wrapper.codex.watcherEvent", {
             eventType,
             logFilePath,
             source: "session-log",
             turnId,
           });
-          emitNotifyEvent("Stop", notifyRunnerPath);
+          emitNotifyEvent(
+            eventType === "waiting" ? "Wait" : eventType === "stop" ? "Stop" : "Start",
+            notifyRunnerPath,
+          );
         }
       })
       .catch(() => undefined)
@@ -391,7 +380,7 @@ async function persistCodexSessionId(
   })).catch(() => undefined);
 }
 
-function emitNotifyEvent(eventName: "Start" | "Stop", notifyRunnerPath: string): void {
+function emitNotifyEvent(eventName: "Start" | "Stop" | "Wait", notifyRunnerPath: string): void {
   void appendAgentShellDebugLog("wrapper.notify.emit", {
     eventName,
     notifyRunnerPath,

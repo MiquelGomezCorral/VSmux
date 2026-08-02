@@ -5,7 +5,7 @@ import { explainFirstPromptAutoRenameDecision } from "./first-prompt-session-tit
 import {
   createPersistedSessionHookDedupMarker,
   readPersistedSessionStateFromFile,
-  writePersistedSessionStateToFile,
+  updatePersistedSessionStateFile,
   type PersistedSessionState,
 } from "./session-state-file";
 
@@ -16,10 +16,12 @@ const USER_PROMPT_SUBMIT_ACK = JSON.stringify({ continue: true });
 
 type AgentHookInfo = {
   agentName: string;
-  normalizedEvent?: "start" | "stop";
+  normalizedEvent?: "start" | "stop" | "waiting" | "resume";
+  notificationType?: string;
   prompt?: string;
   rawEventName?: string;
   sessionId?: string;
+  toolName?: string;
   turnId?: string;
 };
 
@@ -80,8 +82,9 @@ async function main(): Promise<void> {
     agentName: hookInfo.agentName,
     normalizedEvent: hookInfo.normalizedEvent,
   });
+  const oscEvent = hookInfo.normalizedEvent === "resume" ? "start" : hookInfo.normalizedEvent;
   process.stdout.write(
-    `\u001b]${AGENT_CONTROL_COMMAND};${AGENT_CONTROL_NAMESPACE};${hookInfo.normalizedEvent};${hookInfo.agentName}\u0007`,
+    `\u001b]${AGENT_CONTROL_COMMAND};${AGENT_CONTROL_NAMESPACE};${oscEvent};${hookInfo.agentName}\u0007`,
   );
 }
 
@@ -104,11 +107,14 @@ export function getAgentHookInfo(
   fallbackAgentName = process.env.VSMUX_AGENT ?? "unknown",
 ): AgentHookInfo {
   const rawEventName = getJsonStringField(input, "hook_event_name");
-  const normalizedEvent = getNormalizedEventType(input, rawEventName);
+  const notificationType = getJsonStringField(input, "notification_type");
+  const toolName = getJsonStringField(input, "tool_name");
+  const normalizedEvent = getNormalizedEventType(rawEventName, notificationType, toolName, input);
 
   return {
     agentName: getJsonStringField(input, "agent") ?? fallbackAgentName,
     normalizedEvent,
+    ...(notificationType ? { notificationType } : {}),
     prompt:
       rawEventName === USER_PROMPT_SUBMIT_EVENT_NAME
         ? getJsonStringField(input, "prompt")
@@ -118,6 +124,7 @@ export function getAgentHookInfo(
       rawEventName === USER_PROMPT_SUBMIT_EVENT_NAME
         ? getJsonStringField(input, "session_id")
         : undefined,
+    ...(toolName ? { toolName } : {}),
     turnId:
       rawEventName === USER_PROMPT_SUBMIT_EVENT_NAME
         ? getJsonStringField(input, "turn_id")
@@ -152,15 +159,47 @@ export async function claimAgentHookInvocation(
 }
 
 function getNormalizedEventType(
+  rawEventName: string | undefined,
+  notificationType: string | undefined,
+  toolName: string | undefined,
   input: string,
-  rawEventName = getJsonStringField(input, "hook_event_name"),
-): "start" | "stop" | undefined {
-  if (rawEventName && /^start$/i.test(rawEventName)) {
+): "start" | "stop" | "waiting" | "resume" | undefined {
+  const normalizedEventName = rawEventName?.trim().toLowerCase();
+  if (normalizedEventName === "start") {
     return "start";
   }
 
-  if (rawEventName && /^stop$/i.test(rawEventName)) {
+  if (normalizedEventName === "stop" || normalizedEventName === "stopfailure") {
     return "stop";
+  }
+
+  if (normalizedEventName === "wait" || normalizedEventName === "waiting") {
+    return "waiting";
+  }
+
+  /**
+   * CDXC:Agent-input-waiting 2026-07-31-14:11
+   * Only CLI events that identify a live input blocker may turn the orb purple;
+   * generic idle notifications and assistant prose must never be classified as questions.
+   */
+  if (
+    (normalizedEventName === "notification" && notificationType === "permission_prompt") ||
+    (normalizedEventName === "pretooluse" &&
+      (toolName === "AskUserQuestion" || toolName === "ExitPlanMode")) ||
+    normalizedEventName === "elicitation"
+  ) {
+    return "waiting";
+  }
+
+  if (
+    (normalizedEventName === "posttooluse" || normalizedEventName === "posttoolusefailure") &&
+    (toolName === "AskUserQuestion" || toolName === "ExitPlanMode")
+  ) {
+    return "resume";
+  }
+
+  if (normalizedEventName === "elicitationresult" || normalizedEventName === "permissiondenied") {
+    return "resume";
   }
 
   const rawType = getJsonStringField(input, "type");
@@ -207,8 +246,33 @@ export function resolvePersistedSessionStateForHook(
     agentName: hookInfo.agentName || currentState.agentName,
   };
 
-  if (hookInfo.normalizedEvent) {
-    nextState.agentStatus = hookInfo.normalizedEvent === "start" ? "working" : "attention";
+  if (hookInfo.normalizedEvent === "start") {
+    nextState.agentStatus = "working";
+    nextState.agentStatusSource = "structured";
+    nextState.lastActivityAt = new Date().toISOString();
+  }
+
+  if (hookInfo.normalizedEvent === "stop") {
+    nextState.agentStatus = "attention";
+    nextState.agentStatusSource = "structured";
+    applyNotificationRevision(nextState, currentState, "completion");
+    nextState.lastActivityAt = new Date().toISOString();
+  }
+
+  if (hookInfo.normalizedEvent === "waiting") {
+    nextState.agentStatus = "waiting";
+    nextState.agentStatusSource = "structured";
+    applyNotificationRevision(nextState, currentState, "waiting");
+    nextState.lastActivityAt = new Date().toISOString();
+  }
+
+  if (
+    (hookInfo.normalizedEvent === "resume" ||
+      hookInfo.rawEventName === USER_PROMPT_SUBMIT_EVENT_NAME) &&
+    currentState.agentStatus === "waiting"
+  ) {
+    nextState.agentStatus = "working";
+    nextState.agentStatusSource = "structured";
     nextState.lastActivityAt = new Date().toISOString();
   }
 
@@ -230,6 +294,27 @@ export function resolvePersistedSessionStateForHook(
   }
 
   return nextState;
+}
+
+function applyNotificationRevision(
+  nextState: PersistedSessionState,
+  currentState: PersistedSessionState,
+  notificationKind: NonNullable<PersistedSessionState["agentNotificationKind"]>,
+): void {
+  /**
+   * CDXC:Agent-notifications 2026-07-31-14:30
+   * Waiting and completion sounds are semantic edges, not render side effects;
+   * repeated hook snapshots must not mint extra sounds.
+   */
+  if (
+    currentState.agentStatus === nextState.agentStatus &&
+    currentState.agentNotificationKind === notificationKind
+  ) {
+    return;
+  }
+
+  nextState.agentNotificationKind = notificationKind;
+  nextState.agentNotificationSequence = (currentState.agentNotificationSequence ?? 0) + 1;
 }
 
 function shouldIgnorePromptSubmitForDifferentSession(
@@ -267,8 +352,9 @@ async function writeSessionState(hookInfo: AgentHookInfo): Promise<Record<string
           prompt: hookInfo.prompt,
         })
       : undefined;
-  const nextState = resolvePersistedSessionStateForHook(currentState, hookInfo);
-  await writePersistedSessionStateToFile(stateFilePath, nextState);
+  const nextState = await updatePersistedSessionStateFile(stateFilePath, (state) =>
+    resolvePersistedSessionStateForHook(state, hookInfo),
+  );
   if (isClaudeFirstPromptSubmit(hookInfo)) {
     await appendClaudeFirstMessageRenameHookLog("hook.promptSubmitDecision", {
       currentStateAgentSessionId: currentState.agentSessionId,

@@ -99,9 +99,72 @@ export function getClaudeHookSettingsContent(
             ],
           },
         ],
+        PreToolUse: [
+          {
+            matcher: "AskUserQuestion|ExitPlanMode",
+            hooks: [
+              {
+                type: "command",
+                command,
+              },
+            ],
+          },
+        ],
+        PostToolUse: [
+          {
+            matcher: "AskUserQuestion|ExitPlanMode",
+            hooks: [
+              {
+                type: "command",
+                command,
+              },
+            ],
+          },
+        ],
+        PostToolUseFailure: [
+          {
+            matcher: "AskUserQuestion|ExitPlanMode",
+            hooks: [
+              {
+                type: "command",
+                command,
+              },
+            ],
+          },
+        ],
+        PermissionDenied: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command,
+              },
+            ],
+          },
+        ],
+        Elicitation: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command,
+              },
+            ],
+          },
+        ],
+        ElicitationResult: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command,
+              },
+            ],
+          },
+        ],
         Notification: [
           {
-            matcher: "permission_prompt|idle_prompt",
+            matcher: "permission_prompt",
             hooks: [
               {
                 type: "command",
@@ -609,6 +672,7 @@ export const VSmuxNotifyPlugin = async ({ client }) => {
   let rootSessionId = null;
   let stopSent = false;
   const childSessionCache = new Map();
+  const waitingRequestIds = new Set();
 
   const notify = async (eventName) => {
     const payload = JSON.stringify({
@@ -668,7 +732,11 @@ export const VSmuxNotifyPlugin = async ({ client }) => {
       return;
     }
 
-    if (currentState === "idle") {
+    if (waitingRequestIds.size > 0) {
+      return;
+    }
+
+    if (currentState !== "busy") {
       currentState = "busy";
       stopSent = false;
       await notify("Start");
@@ -681,11 +749,47 @@ export const VSmuxNotifyPlugin = async ({ client }) => {
       return;
     }
 
-    if (currentState === "busy" && !stopSent) {
+    if (waitingRequestIds.size > 0) {
+      return;
+    }
+
+    if (currentState !== "idle" && !stopSent) {
       currentState = "idle";
       stopSent = true;
       rootSessionId = null;
       await notify("Stop");
+    }
+  };
+
+  const handleWaiting = async (sessionId, requestId) => {
+    if (!rootSessionId) {
+      rootSessionId = sessionId;
+    }
+
+    if (sessionId !== rootSessionId) {
+      return;
+    }
+
+    waitingRequestIds.add(requestId);
+
+    if (currentState !== "waiting") {
+      currentState = "waiting";
+      stopSent = false;
+      await notify("Wait");
+    }
+  };
+
+  const handleUserReply = async (sessionId, requestId) => {
+    if (rootSessionId && sessionId !== rootSessionId) {
+      return;
+    }
+
+    waitingRequestIds.delete(requestId);
+
+    if (currentState === "waiting" && waitingRequestIds.size === 0) {
+      currentState = "busy";
+      stopSent = false;
+      await notify("Start");
     }
   };
 
@@ -725,6 +829,27 @@ export const VSmuxNotifyPlugin = async ({ client }) => {
         return;
       }
 
+      const requestId = event.properties?.id ?? event.properties?.requestID;
+      if (event.type === "permission.asked" || event.type === "question.asked") {
+        if (!requestId) {
+          return;
+        }
+        await handleWaiting(sessionId, requestId);
+        return;
+      }
+
+      if (
+        event.type === "permission.replied" ||
+        event.type === "question.replied" ||
+        event.type === "question.rejected"
+      ) {
+        if (!requestId) {
+          return;
+        }
+        await handleUserReply(sessionId, requestId);
+        return;
+      }
+
       if (event.type === "session.status") {
         const status = event.properties?.status;
         if (isSessionActive(status)) {
@@ -738,7 +863,12 @@ export const VSmuxNotifyPlugin = async ({ client }) => {
         await handleBusy(sessionId);
       }
 
-      if (event.type === "session.idle" || event.type === "session.error") {
+      if (event.type === "session.idle") {
+        await handleStop(sessionId);
+      }
+
+      if (event.type === "session.error") {
+        waitingRequestIds.clear();
         await handleStop(sessionId);
       }
     },

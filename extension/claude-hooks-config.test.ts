@@ -86,7 +86,7 @@ describe("mergeClaudeHookSettingsContent", () => {
             type: "command",
           },
         ],
-        matcher: "permission_prompt|idle_prompt",
+        matcher: "permission_prompt",
       },
     ]);
   });
@@ -105,7 +105,7 @@ describe("mergeClaudeHookSettingsContent", () => {
                       type: "command",
                     },
                   ],
-                  matcher: "permission_prompt|idle_prompt",
+                  matcher: "permission_prompt",
                 },
               ],
               Stop: [

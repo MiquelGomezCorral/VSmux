@@ -68,6 +68,11 @@
   animation: session-status-dot-pulse 1.35s ease-in-out infinite;
 }
 
+.session-activity-badge[data-activity="waiting"] {
+  border-color: color-mix(in srgb, var(--waiting-primary) 54%, transparent);
+  color: color-mix(in srgb, var(--waiting-secondary) 86%, var(--app-foreground) 14%);
+}
+
 .session-activity-badge[data-activity="attention"] {
   border-color: color-mix(in srgb, var(--attention-primary) 56%, transparent);
   color: color-mix(in srgb, var(--attention-secondary) 86%, var(--app-foreground) 14%);

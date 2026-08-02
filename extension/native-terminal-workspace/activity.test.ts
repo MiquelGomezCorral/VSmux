@@ -49,6 +49,30 @@ function createSnapshot(
 }
 
 describe("syncKnownSessionActivities", () => {
+  test("should queue the configured completion sound when a session starts waiting", async () => {
+    const session = createSessionRecord(1, 0);
+    const snapshots = new Map<string, TerminalSessionSnapshot>([
+      [session.sessionId, createSnapshot(session.sessionId, "idle")],
+    ]);
+    const queueCompletionSound = vi.fn();
+    const context = {
+      getSessionSnapshot: (sessionId: string) => snapshots.get(sessionId),
+      getT3ActivityState: () => ({ activity: "idle" as const, isRunning: false }),
+      lastKnownActivityBySessionId: new Map<string, TerminalSessionSnapshot["agentStatus"]>(),
+      queueCompletionSound,
+      workingStartedAtBySessionId: new Map<string, number>(),
+      workspaceId: "workspace-1",
+    };
+
+    await syncKnownSessionActivities(context, [session], true);
+    snapshots.set(session.sessionId, createSnapshot(session.sessionId, "waiting"));
+    await syncKnownSessionActivities(context, [session], true);
+    await syncKnownSessionActivities(context, [session], true);
+
+    expect(queueCompletionSound).toHaveBeenCalledTimes(1);
+    expect(queueCompletionSound).toHaveBeenCalledWith(session.sessionId);
+  });
+
   test("should queue a completion sound only when a session first turns attention", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
@@ -59,9 +83,7 @@ describe("syncKnownSessionActivities", () => {
     const lastKnownActivityBySessionId = new Map<string, TerminalSessionSnapshot["agentStatus"]>();
     const workingStartedAtBySessionId = new Map<string, number>();
     const queueCompletionSound = vi.fn();
-    const cancelPendingCompletionSound = vi.fn();
     const context = {
-      cancelPendingCompletionSound,
       getSessionSnapshot: (sessionId: string) => snapshots.get(sessionId),
       getT3ActivityState: () => ({ activity: "idle" as const, isRunning: false }),
       lastKnownActivityBySessionId,
@@ -85,41 +107,6 @@ describe("syncKnownSessionActivities", () => {
 
     await syncKnownSessionActivities(context, [session], true);
     expect(queueCompletionSound).toHaveBeenCalledTimes(1);
-
-    vi.useRealTimers();
-  });
-
-  test("should cancel a pending completion sound when attention clears before confirmation", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    const session = createSessionRecord(1, 0);
-    const snapshots = new Map<string, TerminalSessionSnapshot>([
-      [session.sessionId, createSnapshot(session.sessionId, "working")],
-    ]);
-    const lastKnownActivityBySessionId = new Map<string, TerminalSessionSnapshot["agentStatus"]>([
-      [session.sessionId, "working"],
-    ]);
-    const workingStartedAtBySessionId = new Map<string, number>([[session.sessionId, Date.now()]]);
-    const queueCompletionSound = vi.fn();
-    const cancelPendingCompletionSound = vi.fn();
-    const context = {
-      cancelPendingCompletionSound,
-      getSessionSnapshot: (sessionId: string) => snapshots.get(sessionId),
-      getT3ActivityState: () => ({ activity: "idle" as const, isRunning: false }),
-      lastKnownActivityBySessionId,
-      queueCompletionSound,
-      workingStartedAtBySessionId,
-      workspaceId: "workspace-1",
-    };
-
-    vi.advanceTimersByTime(MIN_WORKING_DURATION_BEFORE_ATTENTION_MS);
-    snapshots.set(session.sessionId, createSnapshot(session.sessionId, "attention"));
-    await syncKnownSessionActivities(context, [session], true);
-    expect(queueCompletionSound).toHaveBeenCalledWith(session.sessionId);
-
-    snapshots.set(session.sessionId, createSnapshot(session.sessionId, "working"));
-    await syncKnownSessionActivities(context, [session], true);
-    expect(cancelPendingCompletionSound).toHaveBeenCalledWith(session.sessionId);
 
     vi.useRealTimers();
   });
@@ -134,9 +121,7 @@ describe("syncKnownSessionActivities", () => {
     const lastKnownActivityBySessionId = new Map<string, TerminalSessionSnapshot["agentStatus"]>();
     const workingStartedAtBySessionId = new Map<string, number>();
     const queueCompletionSound = vi.fn();
-    const cancelPendingCompletionSound = vi.fn();
     const context = {
-      cancelPendingCompletionSound,
       getSessionSnapshot: (sessionId: string) => snapshots.get(sessionId),
       getT3ActivityState: () => ({ activity: "idle" as const, isRunning: false }),
       lastKnownActivityBySessionId,
@@ -161,8 +146,7 @@ describe("syncKnownSessionActivities", () => {
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
     const session = createSessionRecord(1, 0);
     const context = {
-      cancelPendingCompletionSound: vi.fn(),
-      getAttentionSuppressedUntil: () => Date.now() + 2_000,
+        getAttentionSuppressedUntil: () => Date.now() + 2_000,
       getSessionSnapshot: () => createSnapshot(session.sessionId, "attention"),
       getT3ActivityState: () => ({ activity: "idle" as const, isRunning: false }),
       lastKnownActivityBySessionId: new Map<string, TerminalSessionSnapshot["agentStatus"]>([
@@ -194,7 +178,6 @@ describe("getEffectiveSessionActivity", () => {
 
     const activity = getEffectiveSessionActivity(
       {
-        cancelPendingCompletionSound: vi.fn(),
         getActivitySuppressedUntil: () => Date.now() + INITIAL_ACTIVITY_SUPPRESSION_MS,
         getSessionSnapshot: () => createSnapshot(session.sessionId, "working"),
         getT3ActivityState: () => ({ activity: "idle" as const, isRunning: false }),
@@ -226,7 +209,6 @@ describe("getEffectiveSessionActivity", () => {
 
     const activity = getEffectiveSessionActivity(
       {
-        cancelPendingCompletionSound: vi.fn(),
         getActivitySuppressedUntil: () => Date.now() + INITIAL_ACTIVITY_SUPPRESSION_MS,
         getSessionSnapshot: () => createSnapshot(session.sessionId, "working"),
         getT3ActivityState: () => ({ activity: "working" as const, isRunning: true }),
@@ -250,7 +232,6 @@ describe("getEffectiveSessionActivity", () => {
 
     const activity = getEffectiveSessionActivity(
       {
-        cancelPendingCompletionSound: vi.fn(),
         getActivitySuppressedUntil: () => Date.now() + INITIAL_ACTIVITY_SUPPRESSION_MS,
         getSessionSnapshot: () => ({
           ...createSnapshot(session.sessionId, "working"),
@@ -281,7 +262,6 @@ describe("getEffectiveSessionActivity", () => {
 
     const activity = getEffectiveSessionActivity(
       {
-        cancelPendingCompletionSound: vi.fn(),
         getActivitySuppressedUntil: () => Date.now() + INITIAL_ACTIVITY_SUPPRESSION_MS,
         getSessionSnapshot: () => ({
           ...createSnapshot(session.sessionId, "attention"),

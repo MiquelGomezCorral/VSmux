@@ -8,6 +8,12 @@ const repoRoot = dirname(scriptDir);
 const packageJson = await import(new URL("../package.json", import.meta.url), {
   with: { type: "json" },
 });
+const localAudioPackageJson = await import(
+  new URL("../local-audio/package.json", import.meta.url),
+  {
+    with: { type: "json" },
+  },
+);
 const extensionVersion = packageJson.default.version;
 const tagName = `v${extensionVersion}`;
 
@@ -101,20 +107,19 @@ function getCurrentBranch() {
 
 ensureCleanGitWorktree();
 ensureTagDoesNotExist();
+if (localAudioPackageJson.default.version !== extensionVersion) {
+  fail("VSmux and VSmux Local Audio must use the same release version.");
+}
 
 const branchName = getCurrentBranch();
 if (!branchName) {
   fail("Refusing to publish from a detached HEAD. Check out a branch first.");
 }
 
-run("vp", [
-  "exec",
-  "vsce",
-  "publish",
-  "--no-dependencies",
-  "--skip-license",
-  "--allow-unused-files-pattern",
-]);
-
+/**
+ * CDXC:Agent-notifications 2026-08-02-12:11
+ * Local audio ships as platform-specific UI extensions, so a release tag lets
+ * CI publish every companion target before the workspace extension depends on it.
+ */
 run("git", ["tag", "-a", tagName, "-m", `Release ${tagName}`]);
 run("git", ["push", "origin", branchName, "--follow-tags"]);
