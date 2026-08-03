@@ -63,7 +63,7 @@ Full release notes: [CHANGELOG.md](./CHANGELOG.md)
 
 ## Local Development
 
-<!-- CDXC:DeveloperWorkflow 2026-07-30-09:11 Keep the repeatable development, test, and local extension update commands in the repository so contributors use the same workflow. -->
+<!-- CDXC:DeveloperWorkflow 2026-08-03-08:07 `pnpm install` must only install dependencies. Local development installs must rebuild and register both VSIXs in Default and every named editor profile; VS Code must be closed so it cannot restore stale extension registries. -->
 
 Run the extension typecheck and repository checks while developing:
 
@@ -72,19 +72,19 @@ pnpm exec tsc -p ./tsconfig.extension.json --noEmit --pretty false
 pnpm run check
 ```
 
-Build and update the locally installed extension without the T3 build:
+Build, package, and install the current source into Default and every named VS Code profile. Quit VS Code before running this command:
 
 ```bash
-pnpm run install:dev -- --skip-t3
+pnpm run install:dev
 ```
 
-If the extension has already been built, update the local installation without rebuilding:
+To install into one profile instead:
 
 ```bash
-pnpm run install:dev -- --skip-build --skip-t3
+pnpm run install:extension -- --profile Vidext
 ```
 
-Reload the VS Code window after installation to load the updated extension.
+Reopen VS Code after installation to load the updated extension.
 
 ## Who Is This For?
 

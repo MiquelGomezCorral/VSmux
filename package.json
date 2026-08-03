@@ -14,12 +14,6 @@
     "url": "https://github.com/maddada/VSmux.git"
   },
   "publisher": "maddada",
-  "extensionKind": [
-    "workspace"
-  ],
-  "extensionDependencies": [
-    "maddada.vsmux-local-audio"
-  ],
   "files": [
     "media/**",
     "chat-history/media/**",
@@ -53,6 +47,7 @@
     "build:extension": "node ./scripts/build-extension.mjs",
     "build:extension:rollback": "node ./scripts/build-extension.mjs --rollback",
     "build:extension:original": "node ./scripts/build-extension.mjs --serial",
+    "build:extension:local": "node ./scripts/build-extension.mjs --skip-t3",
     "build:extension:minimal": "node ./scripts/build-extension.mjs --minimal",
     "build:local-audio": "node ./scripts/build-local-audio.mjs",
     "vscode:prepublish": "node ./scripts/vscode-prepublish.mjs",
@@ -77,8 +72,8 @@
     "prepare": "node ./scripts/vp.mjs config",
     "vsix:package": "node ./scripts/vsix.mjs package",
     "vsix:package:profile": "node ./scripts/vsix.mjs package --profile-build",
-    "install": "node ./scripts/vsix.mjs install",
-    "install:dev": "node ./scripts/dev-install.mjs",
+    "install:extension": "node ./scripts/vsix.mjs install",
+    "install:dev": "node ./scripts/vsix.mjs install --build-script build:extension:local --all-profiles",
     "install:rollback": "node ./scripts/vsix.mjs install --build-script build:extension:rollback",
     "install:minimal": "node ./scripts/vsix.mjs install --build-script build:extension:minimal",
     "install:original": "node ./scripts/vsix.mjs install --build-script build:extension:original",
@@ -1116,6 +1111,12 @@
     "onView:VSmux.sessions",
     "onView:VSmuxSearch.conversations",
     "onWebviewPanel:vsmux.workspace"
+  ],
+  "extensionDependencies": [
+    "maddada.vsmux-local-audio"
+  ],
+  "extensionKind": [
+    "workspace"
   ],
   "icon": "media/VSmux-marketplace-icon.png",
   "engines": {

@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -7,6 +8,7 @@ const validModes = new Set(["package", "install"]);
 const profileBuildFlag = "--profile-build";
 const buildScriptFlag = "--build-script";
 const profileFlag = "--profile";
+const allProfilesFlag = "--all-profiles";
 
 function fail(message) {
   if (message) {
@@ -204,6 +206,101 @@ function resolveCodeCli() {
   return findFirstAvailableCommand([...candidates, ...pathCandidates]);
 }
 
+/**
+ * CDXC:DevInstallation 2026-08-03-08:07 Local development updates must register
+ * both VSIXs in Default and every named editor profile so no profile keeps running
+ * a stale VSmux version. Profile names come from local storage, not Settings Sync.
+ */
+function resolveAllProfiles(vscodeCli) {
+  const userDataDirectory = getEditorUserDataDirectory(vscodeCli);
+  const storagePath = join(userDataDirectory, "globalStorage", "storage.json");
+  if (!existsSync(storagePath)) {
+    fail(`Could not find editor profiles at ${storagePath}.`);
+  }
+
+  let storage;
+  try {
+    storage = JSON.parse(readFileSync(storagePath, "utf8"));
+  } catch {
+    fail(`Could not read editor profiles at ${storagePath}.`);
+  }
+
+  const namedProfiles = Array.isArray(storage?.userDataProfiles)
+    ? storage.userDataProfiles
+        .map((profile) => profile?.name)
+        .filter((name) => typeof name === "string" && name.length > 0)
+    : [];
+  return [undefined, ...new Set(namedProfiles)];
+}
+
+function getEditorUserDataDirectory(vscodeCli) {
+  const editor = getEditorDetails(vscodeCli);
+  if (process.platform === "darwin") {
+    return join(homedir(), "Library", "Application Support", editor.applicationName, "User");
+  }
+
+  if (process.platform === "win32") {
+    return join(
+      process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"),
+      editor.applicationName,
+      "User",
+    );
+  }
+
+  return join(
+    process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"),
+    editor.applicationName,
+    "User",
+  );
+}
+
+function getEditorDetails(vscodeCli) {
+  const normalizedCli = vscodeCli.toLowerCase();
+  if (normalizedCli.includes("cursor")) {
+    return { applicationName: "Cursor", applicationBundleName: "Cursor" };
+  }
+
+  if (normalizedCli.includes("insiders")) {
+    return {
+      applicationName: "Code - Insiders",
+      applicationBundleName: "Visual Studio Code - Insiders",
+    };
+  }
+
+  if (normalizedCli.includes("codium")) {
+    return { applicationName: "VSCodium", applicationBundleName: "VSCodium" };
+  }
+
+  if (normalizedCli.includes("windsurf")) {
+    return { applicationName: "Windsurf", applicationBundleName: "Windsurf" };
+  }
+
+  return { applicationName: "Code", applicationBundleName: "Visual Studio Code" };
+}
+
+/**
+ * CDXC:DevInstallation 2026-08-02-23:15 A local profile install must run while
+ * the macOS editor is closed because its extension host can overwrite the
+ * profile registry with the stale extension version when it exits.
+ */
+function ensureEditorIsClosed(vscodeCli) {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  const processes = spawnSync("ps", ["-ax", "-o", "command="], { encoding: "utf8" });
+  const { applicationName, applicationBundleName } = getEditorDetails(vscodeCli);
+  if (processes.error) {
+    fail(`Could not check whether ${applicationName} is running: ${processes.error.message}`);
+  }
+
+  if (processes.stdout?.includes(`${applicationBundleName}.app/Contents/MacOS/`)) {
+    fail(
+      `Quit ${applicationName} before installing so it cannot restore a stale profile extension registry.`,
+    );
+  }
+}
+
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(scriptDir);
 const mode = process.argv[2];
@@ -215,10 +312,11 @@ const buildScript = requestedBuildScript?.trim() || "build:extension";
 const profileFlagIndex = process.argv.indexOf(profileFlag);
 const requestedProfile =
   profileFlagIndex === -1 ? undefined : process.argv[profileFlagIndex + 1]?.trim();
+const installAllProfiles = process.argv.includes(allProfilesFlag);
 
 if (!validModes.has(mode)) {
   fail(
-    `Usage: node ./scripts/vsix.mjs <package|install> [${profileBuildFlag}] [${buildScriptFlag} <script>] [${profileFlag} <name>]`,
+    `Usage: node ./scripts/vsix.mjs <package|install> [${profileBuildFlag}] [${buildScriptFlag} <script>] [${profileFlag} <name> | ${allProfilesFlag}]`,
   );
 }
 
@@ -228,6 +326,14 @@ if (buildScriptFlagIndex !== -1 && !requestedBuildScript) {
 
 if (profileFlagIndex !== -1 && (!requestedProfile || requestedProfile.startsWith("--"))) {
   fail(`Missing value for ${profileFlag}.`);
+}
+
+if (installAllProfiles && mode !== "install") {
+  fail(`${allProfilesFlag} is only valid for install mode.`);
+}
+
+if (installAllProfiles && requestedProfile) {
+  fail(`${profileFlag} and ${allProfilesFlag} cannot be used together.`);
 }
 
 const packageJson = await import(new URL("../package.json", import.meta.url), {
@@ -241,12 +347,13 @@ const localAudioPackageJson = await import(
   new URL("../local-audio/package.json", import.meta.url),
   {
     with: { type: "json" },
-  },
+  }
 );
 const localAudioTarget = `${process.platform}-${process.arch}`;
 const installerDir = join(repoRoot, "installer");
 const pnpmCli = resolveCommand("pnpm");
 const vsceCli = findPackageBinaryPath("@vscode+vsce@", ["node_modules", "@vscode", "vsce", "vsce"]);
+const vscodeCli = mode === "install" ? resolveCodeCli() : undefined;
 
 if (!existsSync(installerDir)) {
   mkdirSync(installerDir, { recursive: true });
@@ -266,6 +373,23 @@ if (!pnpmCli) {
 
 if (!vsceCli) {
   fail("Could not find the local @vscode/vsce CLI. Run pnpm install and retry.");
+}
+
+if (mode === "install" && !vscodeCli) {
+  fail(
+    "Could not find an editor CLI. Install the 'code' or 'cursor' command, or set VSMUX_CODE_CLI to the editor binary path.",
+  );
+}
+
+const targetProfiles = installAllProfiles
+  ? resolveAllProfiles(vscodeCli ?? "code")
+  : [requestedProfile];
+
+if (installAllProfiles) {
+  ensureEditorIsClosed(vscodeCli);
+  console.log(
+    `[vsix] Installing into profiles: ${targetProfiles.map((profile) => profile ?? "Default").join(", ")}.`,
+  );
 }
 
 try {
@@ -322,22 +446,19 @@ try {
     process.exit(0);
   }
 
-  const vscodeCli = resolveCodeCli();
-
-  if (!vscodeCli) {
-    fail(
-      "Could not find an editor CLI. Install the 'code' or 'cursor' command, or set VSMUX_CODE_CLI to the editor binary path.",
-    );
-  }
-
   /**
-   * CDXC:DevInstallation 2026-08-02-22:05 VS Code profiles register extensions
-   * independently, so a profile-targeted install must register both the local
-   * audio companion and workspace extension in that same profile.
+   * CDXC:DevInstallation 2026-08-03-08:07 Editor profiles register extensions
+   * independently, so every target profile must receive both the local audio
+   * companion and the workspace extension.
    */
-  const profileArgs = requestedProfile ? [profileFlag, requestedProfile] : [];
-  run(vscodeCli, ["--install-extension", localAudioVsixPath, "--force", ...profileArgs]);
-  run(vscodeCli, ["--install-extension", vsixPath, "--force", ...profileArgs]);
+  if (installAllProfiles) {
+    ensureEditorIsClosed(vscodeCli);
+  }
+  for (const targetProfile of targetProfiles) {
+    const profileArgs = targetProfile ? [profileFlag, targetProfile] : [];
+    run(vscodeCli, ["--install-extension", localAudioVsixPath, "--force", ...profileArgs]);
+    run(vscodeCli, ["--install-extension", vsixPath, "--force", ...profileArgs]);
+  }
 } finally {
   if (mode === "install") {
     rmSync(localAudioVsixPath, { force: true });
