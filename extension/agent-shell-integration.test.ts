@@ -251,8 +251,21 @@ describe("getOpenCodePluginContent", () => {
     expect(plugin).toContain('if (event.type === "session.idle") {');
     expect(plugin).toContain('if (event.type === "session.error") {');
     expect(plugin).toContain("if (waitingRequestIds.size > 0) {");
-    expect(plugin).toContain('event.type === "permission.asked" || event.type === "question.asked"');
+    expect(plugin).toContain(
+      'event.type === "permission.asked" || event.type === "question.asked"',
+    );
     expect(plugin).toContain('event.type === "permission.replied" ||');
+    expect(plugin).toContain("event.properties?.permissionID");
+  });
+
+  test("should route child request blockers through their top-level session", () => {
+    const plugin = getOpenCodePluginContent("/tmp/vsmux-notify.js", "/usr/local/bin/node");
+
+    expect(plugin).toContain("const getRootSessionId = async (sessionId) => {");
+    expect(plugin).toContain("const eventRootSessionId = await getRootSessionId(sessionId);");
+    expect(plugin).toContain("await handleWaiting(eventRootSessionId, requestId);");
+    expect(plugin).toContain("await handleUserReply(eventRootSessionId, requestId);");
+    expect(plugin).toContain("if (sessionId !== eventRootSessionId) {");
   });
 });
 

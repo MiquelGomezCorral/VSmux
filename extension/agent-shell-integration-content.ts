@@ -671,7 +671,7 @@ export const VSmuxNotifyPlugin = async ({ client }) => {
   let currentState = "idle";
   let rootSessionId = null;
   let stopSent = false;
-  const childSessionCache = new Map();
+  const rootSessionIdBySessionId = new Map();
   const waitingRequestIds = new Set();
 
   const notify = async (eventName) => {
@@ -699,26 +699,50 @@ export const VSmuxNotifyPlugin = async ({ client }) => {
     }
   };
 
-  const isChildSession = async (sessionId) => {
+  /**
+   * CDXC:Agent-input-waiting 2026-08-04-12:45
+   * Foreground child agents block their parent chat on requests, so blockers
+   * must resolve to the top-level session before entering the waiting flow.
+   * Initial status updates use that same root to keep subsequent blockers valid.
+   * Child lifecycle events remain excluded to avoid reporting task activity as
+   * top-level completion.
+   */
+  const getRootSessionId = async (sessionId) => {
     if (!sessionId) {
-      return true;
+      return undefined;
     }
     if (!client?.session?.list) {
-      return true;
+      return undefined;
     }
-    if (childSessionCache.has(sessionId)) {
-      return childSessionCache.get(sessionId);
+    if (rootSessionIdBySessionId.has(sessionId)) {
+      return rootSessionIdBySessionId.get(sessionId);
     }
 
     try {
       const sessions = await client.session.list();
-      const session = sessions.data?.find((candidate) => candidate.id === sessionId);
-      const isChild = !!session?.parentID;
-      childSessionCache.set(sessionId, isChild);
-      return isChild;
+      const sessionsById = new Map(
+        (sessions.data ?? []).filter((session) => session.id).map((session) => [session.id, session]),
+      );
+      const seenSessionIds = new Set();
+      let currentSessionId = sessionId;
+      while (!seenSessionIds.has(currentSessionId)) {
+        seenSessionIds.add(currentSessionId);
+        const session = sessionsById.get(currentSessionId);
+        if (!session) {
+          return undefined;
+        }
+        if (!session.parentID) {
+          rootSessionIdBySessionId.set(sessionId, currentSessionId);
+          return currentSessionId;
+        }
+
+        currentSessionId = session.parentID;
+      }
     } catch {
-      return true;
+      // best effort only
     }
+
+    return undefined;
   };
 
   const isSessionActive = (status) => status?.type && status.type !== "idle";
@@ -798,7 +822,8 @@ export const VSmuxNotifyPlugin = async ({ client }) => {
       return;
     }
 
-    if (await isChildSession(currentSessionId)) {
+    const initialRootSessionId = await getRootSessionId(currentSessionId);
+    if (!initialRootSessionId) {
       return;
     }
 
@@ -806,12 +831,12 @@ export const VSmuxNotifyPlugin = async ({ client }) => {
       const statuses = await client.session.status();
       const status = statuses.data?.[currentSessionId];
       if (isSessionActive(status)) {
-        await handleBusy(currentSessionId);
+        await handleBusy(initialRootSessionId);
         return;
       }
 
       if (status?.type === "idle") {
-        await handleStop(currentSessionId);
+        await handleStop(initialRootSessionId);
       }
     } catch {
       // best effort only
@@ -825,16 +850,22 @@ export const VSmuxNotifyPlugin = async ({ client }) => {
   return {
     event: async ({ event }) => {
       const sessionId = event.properties?.sessionID;
-      if (await isChildSession(sessionId)) {
+      const eventRootSessionId = await getRootSessionId(sessionId);
+      if (!eventRootSessionId) {
         return;
       }
 
-      const requestId = event.properties?.id ?? event.properties?.requestID;
+      /**
+       * CDXC:Agent-input-waiting 2026-08-04-12:10
+       * OpenCode permission replies have used both permissionID and requestID;
+       * normalize either so the blocker that raised the purple orb can clear it.
+       */
+      const requestId = event.properties?.id ?? event.properties?.requestID ?? event.properties?.permissionID;
       if (event.type === "permission.asked" || event.type === "question.asked") {
         if (!requestId) {
           return;
         }
-        await handleWaiting(sessionId, requestId);
+        await handleWaiting(eventRootSessionId, requestId);
         return;
       }
 
@@ -846,7 +877,11 @@ export const VSmuxNotifyPlugin = async ({ client }) => {
         if (!requestId) {
           return;
         }
-        await handleUserReply(sessionId, requestId);
+        await handleUserReply(eventRootSessionId, requestId);
+        return;
+      }
+
+      if (sessionId !== eventRootSessionId) {
         return;
       }
 
