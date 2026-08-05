@@ -6,7 +6,7 @@ import type { TerminalEngine } from "./session-grid-contract";
  * intentionally reused across extension reloads when the protocol matches, so
  * behavior-only daemon fixes need a version change to replace old processes.
  */
-export const TERMINAL_HOST_PROTOCOL_VERSION = 33;
+export const TERMINAL_HOST_PROTOCOL_VERSION = 34;
 
 export type TerminalSessionStatus = "starting" | "running" | "exited" | "error" | "disconnected";
 
