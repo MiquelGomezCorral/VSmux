@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import * as path from "node:path";
@@ -102,7 +103,6 @@ type ManagedSession = {
   claudeDoneRunningMarkerIgnoreUntil?: number;
   cols: number;
   cwd: string;
-  exitPromise: Promise<void>;
   frontendAttachmentGeneration: number;
   hasRestoredSleepHistory: boolean;
   headlessTerminal?: HeadlessTerminal;
@@ -120,18 +120,17 @@ type ManagedSession = {
   pendingAttachQueues: PendingAttachQueue[];
   serializeAddon?: SerializeAddon;
   /**
-   * CDXC:TerminalSleep 2026-07-31-13:24
-   * Create/attach waits for an active sleep so wake never reuses a PTY that is
-   * about to be killed.
+   * CDXC:OpenCode-lifecycle 2026-08-04-17:14
+   * Create/attach waits for close or sleep cleanup so an exact-state OpenCode
+   * reaper can never select a replacement terminal's process group.
    */
-  sleepPromise?: Promise<void>;
+  stopPromise?: Promise<void>;
   terminalEngine: TerminalEngine;
   titleActivity?: TitleDerivedSessionActivity;
   titleActivityTimer?: NodeJS.Timeout;
   titleCarryover: string;
   pty: PtyProcess;
   rows: number;
-  resolveExit: () => void;
   sessionId: string;
   sessionKey: string;
   sessionStateFilePath: string;
@@ -175,6 +174,8 @@ const MAX_XTERM_HEADLESS_SCROLLBACK = 100_000;
 const DEFAULT_XTERM_HEADLESS_SCROLLBACK = 50_000;
 const CLAUDE_DONE_STALE_RUNNING_MARKER_IGNORE_MS = 1_000;
 const INFO_FILE_NAME = "daemon-info.json";
+const OPEN_CODE_TEARDOWN_TIMEOUT_MS = 5_000;
+const TERMINAL_DAEMON_STATE_DIR_PREFIX = "terminal-daemon-";
 const stateDir = getStateDirFromArgs();
 const infoFilePath = path.join(stateDir, INFO_FILE_NAME);
 
@@ -433,17 +434,8 @@ async function handleCreateOrAttachRequest(
 ): Promise<void> {
   const sessionKey = createTerminalDaemonSessionKey(request.workspaceId, request.sessionId);
   let existingSession = sessions.get(sessionKey);
-  if (existingSession?.sleepPromise) {
-    try {
-      await existingSession.sleepPromise;
-    } catch {
-      /**
-       * CDXC:TerminalSleep 2026-07-31-13:24
-       * The original sleep request reports failure; reuse the live PTY.
-       */
-    }
-    existingSession = sessions.get(sessionKey);
-  }
+  await waitForSessionStop(existingSession);
+  existingSession = sessions.get(sessionKey);
   let didCreateSession = false;
   let session: ManagedSession;
   if (existingSession && existingSession.snapshot.status !== "exited") {
@@ -530,9 +522,9 @@ async function handleKillRequest(
   const sessionKey = createTerminalDaemonSessionKey(request.workspaceId, request.sessionId);
   const session = sessions.get(sessionKey);
   if (session) {
-    session.isStopping = true;
-    session.pty.kill();
-    sessions.delete(sessionKey);
+    await stopSession(sessionKey, session, false);
+  } else {
+    await terminateOpenCodeSession(getExpectedSessionStateFilePath(request));
   }
   socket.send(JSON.stringify(okResponse(request.requestId)));
 }
@@ -544,33 +536,9 @@ async function handleSleepRequest(
   const sessionKey = createTerminalDaemonSessionKey(request.workspaceId, request.sessionId);
   const session = sessions.get(sessionKey);
   if (session) {
-    if (session.sleepPromise) {
-      await session.sleepPromise;
-    } else {
-      session.isStopping = true;
-      session.sleepPromise = (async () => {
-        try {
-          await persistSessionSleepHistory(session);
-          session.pty.kill();
-          await session.exitPromise;
-          /**
-           * CDXC:TerminalSleep 2026-07-31-13:24
-           * Moon restores the visible terminal at the moment sleep begins.
-           * PTY teardown can leave an alternate screen and replace that view
-           * with shell history, so never overwrite the pre-kill replay here.
-           */
-          if (sessions.get(sessionKey) === session) {
-            sessions.delete(sessionKey);
-          }
-        } catch (error) {
-          session.isStopping = false;
-          throw error;
-        } finally {
-          session.sleepPromise = undefined;
-        }
-      })();
-      await session.sleepPromise;
-    }
+    await stopSession(sessionKey, session, true);
+  } else {
+    await terminateOpenCodeSession(getExpectedSessionStateFilePath(request));
   }
   socket.send(JSON.stringify(okResponse(request.requestId)));
 }
@@ -645,15 +613,9 @@ async function createSession(request: TerminalHostCreateOrAttachRequest): Promis
     name: "xterm-256color",
     rows: request.rows,
   });
-  let resolveExit: () => void = () => undefined;
-  const exitPromise = new Promise<void>((resolve) => {
-    resolveExit = resolve;
-  });
-
   const session: ManagedSession = {
     cols: request.cols,
     cwd: request.cwd,
-    exitPromise,
     frontendAttachmentGeneration: 0,
     hasRestoredSleepHistory: restoredHistory !== undefined,
     headlessTerminal: xtermState?.headlessTerminal,
@@ -664,7 +626,6 @@ async function createSession(request: TerminalHostCreateOrAttachRequest): Promis
     pendingAttachQueues: [],
     pty: spawnedPty,
     rows: request.rows,
-    resolveExit,
     sessionId: request.sessionId,
     sessionKey,
     sessionStateFilePath: request.sessionStateFilePath,
@@ -726,7 +687,6 @@ async function createSession(request: TerminalHostCreateOrAttachRequest): Promis
     void buildSnapshot(session, false).then((snapshot) => {
       broadcastControlSessionState(snapshot);
     });
-    session.resolveExit();
   });
 
   return session;
@@ -1454,7 +1414,8 @@ function applySessionTitleActivity(session: ManagedSession): void {
   const notificationPatch =
     previousStatus !== nextStatus && (nextStatus === "waiting" || nextStatus === "attention")
       ? {
-          agentNotificationKind: nextStatus === "waiting" ? ("waiting" as const) : ("completion" as const),
+          agentNotificationKind:
+            nextStatus === "waiting" ? ("waiting" as const) : ("completion" as const),
           agentNotificationSequence: session.nextAgentNotificationSequence++,
         }
       : {};
@@ -1564,17 +1525,132 @@ function getConnectedClientCount(): number {
   );
 }
 
+export async function waitForSessionStop(
+  session: Pick<ManagedSession, "isStopping" | "stopPromise"> | undefined,
+): Promise<void> {
+  if (session?.stopPromise) {
+    await session.stopPromise;
+    return;
+  }
+  if (session?.isStopping) {
+    throw new Error("VSmux terminal session teardown did not complete.");
+  }
+}
+
+async function stopSession(
+  sessionKey: string,
+  session: ManagedSession,
+  shouldPersistSleepHistory: boolean,
+): Promise<void> {
+  if (session.stopPromise) {
+    return session.stopPromise;
+  }
+
+  session.isStopping = true;
+  let didKillPty = false;
+  session.stopPromise = (async () => {
+    try {
+      if (shouldPersistSleepHistory) {
+        await persistSessionSleepHistory(session);
+      }
+      session.pty.kill();
+      didKillPty = true;
+      await terminateOpenCodeSession(session.sessionStateFilePath);
+      if (sessions.get(sessionKey) === session) {
+        sessions.delete(sessionKey);
+      }
+    } catch (error) {
+      if (!didKillPty) {
+        session.isStopping = false;
+      }
+      throw error;
+    } finally {
+      session.stopPromise = undefined;
+    }
+  })();
+  return session.stopPromise;
+}
+
+/**
+ * CDXC:OpenCode-lifecycle 2026-08-04-17:14
+ * PTY shutdown does not reliably signal an inherited OpenCode wrapper on macOS.
+ * Run the wrapper's bounded, exact-state reaper before forgetting a session so
+ * close and sleep report cleanup failures instead of acknowledging a leaked tree.
+ */
+async function terminateOpenCodeSession(sessionStateFilePath: string | undefined): Promise<void> {
+  if (!sessionStateFilePath || process.platform === "win32") {
+    return;
+  }
+
+  const runnerPath = path.join(__dirname, "agent-shell-wrapper-runner.js");
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [runnerPath, "--terminate-opencode-state", sessionStateFilePath],
+      { stdio: "ignore" },
+    );
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`Timed out cleaning OpenCode state ${sessionStateFilePath}.`));
+    }, OPEN_CODE_TEARDOWN_TIMEOUT_MS);
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`OpenCode cleanup exited with code ${String(code)}.`));
+    });
+  });
+}
+
+function getExpectedSessionStateFilePath(
+  request: Pick<TerminalHostKillRequest, "sessionId" | "workspaceId">,
+): string | undefined {
+  const daemonStateDirectoryName = path.basename(stateDir);
+  const daemonWorkspaceId = daemonStateDirectoryName.startsWith(TERMINAL_DAEMON_STATE_DIR_PREFIX)
+    ? daemonStateDirectoryName.slice(TERMINAL_DAEMON_STATE_DIR_PREFIX.length)
+    : undefined;
+  if (
+    !daemonWorkspaceId ||
+    daemonWorkspaceId !== request.workspaceId ||
+    !request.sessionId ||
+    path.basename(request.sessionId) !== request.sessionId
+  ) {
+    return undefined;
+  }
+
+  return path.join(
+    path.dirname(stateDir),
+    `terminal-session-state:${daemonWorkspaceId}`,
+    `${request.sessionId}.state`,
+  );
+}
+
 async function shutdown(reason = "unknown"): Promise<void> {
   clearLifecycleTimer();
   clearOwnerAdoptionTimer();
   void reason;
-  for (const session of sessions.values()) {
+  const stoppingSessions = [...sessions.values()];
+  for (const session of stoppingSessions) {
+    session.isStopping = true;
     try {
       session.pty.kill();
     } catch {
       // Ignore process shutdown races.
     }
   }
+  await Promise.all(
+    stoppingSessions.map((session) =>
+      terminateOpenCodeSession(session.sessionStateFilePath).catch((error) => {
+        console.error("VSmux: OpenCode cleanup failed during daemon shutdown.", error);
+      }),
+    ),
+  );
   sessions.clear();
   await new Promise<void>((resolve) => {
     server.close(() => resolve());
@@ -1612,20 +1688,30 @@ async function expireLeasedSessionsAndMaybeShutdown(): Promise<void> {
   }
 
   const now = Date.now();
+  const stoppingSessions: ManagedSession[] = [];
   for (const [sessionKey, session] of sessions) {
     if (
       session.leaseExpiresAt !== undefined &&
       session.leaseExpiresAt !== null &&
       session.leaseExpiresAt <= now
     ) {
+      session.isStopping = true;
       try {
         session.pty.kill();
       } catch {
         // Ignore process shutdown races when expiring leased sessions.
       }
       sessions.delete(sessionKey);
+      stoppingSessions.push(session);
     }
   }
+  await Promise.all(
+    stoppingSessions.map((session) =>
+      terminateOpenCodeSession(session.sessionStateFilePath).catch((error) => {
+        console.error("VSmux: OpenCode cleanup failed during lease expiry.", error);
+      }),
+    ),
+  );
 
   const remainingLeaseDelayMs = getRemainingLeaseDelayMs();
   if (remainingLeaseDelayMs === Infinity) {

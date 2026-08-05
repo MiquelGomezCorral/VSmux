@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { open, readFile, unlink } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { promisify } from "node:util";
 import { appendAgentShellDebugLog } from "./agent-shell-debug-log";
 import { detectCodexLifecycleEventFromLogLine } from "./agent-shell-integration";
 import { ensureClaudeHooksFile } from "./claude-hooks-config";
@@ -28,22 +29,71 @@ type CodexWatcherHandle = {
   stop: () => void;
 };
 
+type OpenCodeStateOwner = {
+  pid: number;
+};
+
+type OpenCodeStateOwnerHandle = {
+  ownerFilePath: string;
+  pid: number;
+};
+
+type AgentProcessLifecycle = {
+  processGroupId: number | undefined;
+  stateOwner: OpenCodeStateOwnerHandle | undefined;
+};
+
+export type UnixProcessSnapshot = {
+  command: string;
+  pgid: number;
+  pid: number;
+  ppid: number;
+};
+
 const CODEX_LOG_POLL_INTERVAL_MS = 200;
+const OPEN_CODE_OWNER_FILE_SUFFIX = ".opencode-owner";
+const PROCESS_TREE_TERMINATION_TIMEOUT_MS = 4_000;
+const execFileAsync = promisify(execFile);
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   process.env.VSMUX_AGENT_SHELL_DEBUG_LOG_PATH = options.debugLogPath;
+  const args = normalizeOpenCodeArguments(options.agent, options.forwardedArgs);
+  const stateFilePath = process.env.VSMUX_SESSION_STATE_FILE?.trim();
+  const isInteractiveOpenCode =
+    options.agent === "opencode" && isInteractiveOpenCodeInvocation(args);
   const executablePath = resolveExecutablePath(options.agent, options.binDir);
   if (!executablePath) {
     throw new Error(`VSmux: ${options.agent} not found in PATH.`);
   }
 
+  const processGroupId = isInteractiveOpenCode
+    ? await getUnixProcessGroupId(process.pid)
+    : undefined;
+  if (stateFilePath && isInteractiveOpenCode && process.platform !== "win32" && !processGroupId) {
+    await appendAgentShellDebugLog("wrapper.launch.skippedMissingProcessGroup", {
+      agent: options.agent,
+      sessionStateFilePath: stateFilePath,
+    });
+    return;
+  }
+  const stateOwner =
+    stateFilePath && isInteractiveOpenCode
+      ? await acquireOpenCodeStateOwner(stateFilePath)
+      : undefined;
+  if (stateFilePath && isInteractiveOpenCode && !stateOwner) {
+    await appendAgentShellDebugLog("wrapper.launch.skippedExistingOpenCode", {
+      agent: options.agent,
+      sessionStateFilePath: stateFilePath,
+    });
+    return;
+  }
+
   const environment = createAgentEnvironment(options.agent, process.env);
-  const args = [...options.forwardedArgs];
   await appendAgentShellDebugLog("wrapper.launch.prepare", {
     agent: options.agent,
     executablePath,
-    forwardedArgs: options.forwardedArgs,
+    forwardedArgs: args,
   });
 
   switch (options.agent) {
@@ -94,7 +144,9 @@ async function main(): Promise<void> {
       break;
     case "opencode":
       delete environment.ELECTRON_RUN_AS_NODE;
-      await writeInitialSessionState("opencode", "OpenCode");
+      if (isInteractiveOpenCode) {
+        await writeInitialSessionState("opencode", "OpenCode");
+      }
       environment.OPENCODE_CONFIG_DIR = options.opencodeConfigDir;
       break;
   }
@@ -115,10 +167,13 @@ async function main(): Promise<void> {
     detached: shouldSpawnAgentInDetachedGroup(),
     notifyRunnerPath: options.notifyRunnerPath,
     sessionLogPath: environment.CODEX_TUI_SESSION_LOG_PATH,
-    sessionStateFilePath: environment.VSMUX_SESSION_STATE_FILE,
+    sessionStateFilePath: stateFilePath,
     wrapperTty: readWrapperTtySnapshot(),
   });
-  const exitCode = await spawnAgentProcess(options.agent, executablePath, args, environment);
+  const exitCode = await spawnAgentProcess(options.agent, executablePath, args, environment, {
+    processGroupId,
+    stateOwner,
+  });
   await appendAgentShellDebugLog("wrapper.launch.exit", {
     agent: options.agent,
     exitCode,
@@ -237,6 +292,28 @@ export function getCandidateExecutableNames(
 
   const pathextCandidates = pathExtensions.map((extension) => `${agent}${extension.toLowerCase()}`);
   return agent === "codex" ? pathextCandidates : [...pathextCandidates, agent];
+}
+
+/**
+ * CDXC:OpenCode-lifecycle 2026-08-04-15:33
+ * A failed title lookup starts a fresh OpenCode session. Do not forward `-s ""`,
+ * because OpenCode treats it as another interactive root for the same terminal.
+ */
+export function normalizeOpenCodeArguments(agent: AgentName, args: readonly string[]): string[] {
+  if (agent !== "opencode") {
+    return [...args];
+  }
+
+  const sessionFlagIndex = args.findIndex((arg) => arg === "-s" || arg === "--session");
+  if (sessionFlagIndex < 0 || args[sessionFlagIndex + 1]?.trim()) {
+    return [...args];
+  }
+
+  return [...args.slice(0, sessionFlagIndex), ...args.slice(sessionFlagIndex + 2)];
+}
+
+export function isInteractiveOpenCodeInvocation(args: readonly string[]): boolean {
+  return args.length === 0 || args[0] === "-s" || args[0] === "--session";
 }
 
 async function writeInitialSessionState(agent: AgentName, title: string): Promise<void> {
@@ -423,6 +500,7 @@ function spawnAgentProcess(
   executablePath: string,
   args: readonly string[],
   environment: NodeJS.ProcessEnv,
+  lifecycle: AgentProcessLifecycle,
 ): Promise<number> {
   if (process.platform === "win32" && agent === "codex") {
     const executableDir = path.dirname(executablePath);
@@ -445,6 +523,7 @@ function spawnAgentProcess(
             env: environment,
             stdio: "inherit",
           }),
+          lifecycle,
         );
       }
     } catch {
@@ -465,6 +544,7 @@ function spawnAgentProcess(
           stdio: "inherit",
           windowsVerbatimArguments: true,
         }),
+        lifecycle,
       ).then(resolve, reject);
     });
   }
@@ -476,14 +556,16 @@ function spawnAgentProcess(
       env: environment,
       stdio: "inherit",
     }),
+    lifecycle,
   );
 }
 
 function waitForAgentProcessExit(
   agent: AgentName,
   child: ReturnType<typeof spawn>,
+  lifecycle: AgentProcessLifecycle,
 ): Promise<number> {
-  const cleanup = registerWrapperTerminationHandlers(agent, child);
+  const cleanup = registerWrapperTerminationHandlers(agent, child, lifecycle);
   void appendAgentShellDebugLog("wrapper.launch.spawned", {
     agent,
     childPid: child.pid,
@@ -494,11 +576,11 @@ function waitForAgentProcessExit(
   return new Promise((resolve, reject) => {
     child.once("error", (error) => {
       cleanup();
-      reject(error);
+      void releaseOpenCodeStateOwner(lifecycle.stateOwner).finally(() => reject(error));
     });
     child.once("exit", (code) => {
       cleanup();
-      resolve(code ?? 1);
+      void releaseOpenCodeStateOwner(lifecycle.stateOwner).finally(() => resolve(code ?? 1));
     });
   });
 }
@@ -506,6 +588,7 @@ function waitForAgentProcessExit(
 function registerWrapperTerminationHandlers(
   agent: AgentName,
   child: ReturnType<typeof spawn>,
+  lifecycle: AgentProcessLifecycle,
 ): () => void {
   let forcedKillTimer: NodeJS.Timeout | undefined;
   let isCleaningUp = false;
@@ -521,11 +604,18 @@ function registerWrapperTerminationHandlers(
       signal,
       source,
     });
-    killChildProcessTree(child.pid, signal);
-    forcedKillTimer = setTimeout(() => {
-      killChildProcessTree(child.pid, "SIGKILL");
-    }, 4_000);
-    forcedKillTimer.unref?.();
+    const isGroupTerminatorScheduled = terminateChildProcessTree(
+      child.pid,
+      lifecycle.processGroupId,
+      lifecycle.stateOwner,
+      signal,
+    );
+    if (!isGroupTerminatorScheduled) {
+      forcedKillTimer = setTimeout(() => {
+        terminateChildProcessTree(child.pid, undefined, undefined, "SIGKILL");
+      }, PROCESS_TREE_TERMINATION_TIMEOUT_MS);
+      forcedKillTimer.unref?.();
+    }
   };
 
   const signalHandlers = new Map<NodeJS.Signals, () => void>();
@@ -583,9 +673,40 @@ function readWrapperTtySnapshot(): Record<string, unknown> {
   };
 }
 
-function killChildProcessTree(pid: number | undefined, signal: NodeJS.Signals): void {
+function terminateChildProcessTree(
+  pid: number | undefined,
+  processGroupId: number | undefined,
+  stateOwner: OpenCodeStateOwnerHandle | undefined,
+  signal: NodeJS.Signals,
+): boolean {
   if (!pid || pid <= 0) {
-    return;
+    return false;
+  }
+
+  /**
+   * CDXC:OpenCode-lifecycle 2026-08-04-15:33
+   * OpenCode and its MCP servers share the foreground terminal group. A detached
+   * reaper survives the wrapper's shutdown long enough to terminate that whole
+   * group and escalate to SIGKILL when an MCP child ignores SIGTERM.
+   */
+  if (process.platform !== "win32" && stateOwner && processGroupId && processGroupId > 0) {
+    const reaper = spawn(
+      process.execPath,
+      [
+        __filename,
+        "--terminate-process-group",
+        String(processGroupId),
+        stateOwner?.ownerFilePath ?? "",
+        String(stateOwner?.pid ?? ""),
+      ],
+      {
+        detached: true,
+        env: process.env,
+        stdio: "ignore",
+      },
+    );
+    reaper.unref();
+    return true;
   }
 
   try {
@@ -597,6 +718,303 @@ function killChildProcessTree(pid: number | undefined, signal: NodeJS.Signals): 
       // Ignore races where the child already exited.
     }
   }
+  return false;
+}
+
+/**
+ * CDXC:OpenCode-lifecycle 2026-08-04-15:33
+ * An interactive VSmux terminal owns one OpenCode process group per persisted
+ * state file. Only orphaned groups are replaced; a still-attached terminal
+ * keeps its running session and is never relaunched.
+ */
+async function acquireOpenCodeStateOwner(
+  stateFilePath: string,
+): Promise<OpenCodeStateOwnerHandle | undefined> {
+  const ownerFilePath = `${stateFilePath}${OPEN_CODE_OWNER_FILE_SUFFIX}`;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const owner = await readOpenCodeStateOwner(ownerFilePath);
+    const processes = await listOpenCodeStateFileProcesses(stateFilePath);
+    if (!processes) {
+      return undefined;
+    }
+    const ownerProcess = owner
+      ? processes.find((processInfo) => processInfo.pid === owner.pid)
+      : undefined;
+    if (owner && isProcessAlive(owner.pid) && (!ownerProcess || ownerProcess.ppid !== 1)) {
+      return undefined;
+    }
+
+    const processGroupIds = selectOpenCodeStateFileProcessGroups(processes, stateFilePath);
+    const orphanedProcessGroupIds = processGroupIds.filter((processGroupId) =>
+      processes.some(
+        (processInfo) => processInfo.pgid === processGroupId && processInfo.ppid === 1,
+      ),
+    );
+    if (orphanedProcessGroupIds.length !== processGroupIds.length) {
+      return undefined;
+    }
+
+    await terminateUnixProcessGroups(orphanedProcessGroupIds);
+    await unlink(ownerFilePath).catch(() => undefined);
+
+    try {
+      const ownerHandle = await open(ownerFilePath, "wx");
+      try {
+        await ownerHandle.writeFile(
+          JSON.stringify({
+            pid: process.pid,
+          } satisfies OpenCodeStateOwner),
+        );
+      } finally {
+        await ownerHandle.close();
+      }
+      return {
+        ownerFilePath,
+        pid: process.pid,
+      };
+    } catch (error) {
+      if (!isFileExistsError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+async function releaseOpenCodeStateOwner(
+  stateOwner: OpenCodeStateOwnerHandle | undefined,
+): Promise<void> {
+  if (!stateOwner) {
+    return;
+  }
+
+  const owner = await readOpenCodeStateOwner(stateOwner.ownerFilePath);
+  if (owner?.pid !== stateOwner.pid) {
+    return;
+  }
+
+  await unlink(stateOwner.ownerFilePath).catch(() => undefined);
+}
+
+async function readOpenCodeStateOwner(
+  ownerFilePath: string,
+): Promise<OpenCodeStateOwner | undefined> {
+  try {
+    const rawOwner = await readFile(ownerFilePath, "utf8");
+    const parsedOwner = JSON.parse(rawOwner) as Partial<OpenCodeStateOwner>;
+    if (typeof parsedOwner.pid !== "number" || parsedOwner.pid <= 0) {
+      return undefined;
+    }
+
+    return {
+      pid: parsedOwner.pid,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function listOpenCodeStateFileProcesses(
+  stateFilePath: string,
+): Promise<UnixProcessSnapshot[] | undefined> {
+  if (process.platform === "win32") {
+    return [];
+  }
+
+  try {
+    const { stdout } = await execFileAsync("ps", ["eww", "-axo", "pid=,ppid=,pgid=,command="], {
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    return parseUnixProcessList(stdout).filter(
+      (processInfo) =>
+        processInfo.pid !== process.pid &&
+        isInteractiveOpenCodeStateFileProcess(processInfo.command, stateFilePath),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+export function parseUnixProcessList(rawOutput: string): UnixProcessSnapshot[] {
+  return rawOutput.split(/\r?\n/).flatMap((line) => {
+    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+([\s\S]+)$/);
+    if (!match) {
+      return [];
+    }
+
+    return [
+      {
+        command: match[4],
+        pgid: Number.parseInt(match[3], 10),
+        pid: Number.parseInt(match[1], 10),
+        ppid: Number.parseInt(match[2], 10),
+      },
+    ];
+  });
+}
+
+export function selectOpenCodeStateFileProcessGroups(
+  processes: readonly UnixProcessSnapshot[],
+  stateFilePath: string,
+): number[] {
+  return [
+    ...new Set(
+      processes
+        .filter((processInfo) =>
+          isInteractiveOpenCodeStateFileProcess(processInfo.command, stateFilePath),
+        )
+        .map((processInfo) => processInfo.pgid),
+    ),
+  ];
+}
+
+function isInteractiveOpenCodeStateFileProcess(command: string, stateFilePath: string): boolean {
+  const normalizedCommand = command.toLowerCase();
+  if (
+    !hasExactOpenCodeStateFileMarker(command, stateFilePath) ||
+    isOpenCodeUtilityCommand(normalizedCommand)
+  ) {
+    return false;
+  }
+
+  return (
+    (normalizedCommand.includes("agent-shell-wrapper-runner.js") &&
+      normalizedCommand.includes("--agent opencode")) ||
+    normalizedCommand.includes("vsmux_agent=opencode")
+  );
+}
+
+function hasExactOpenCodeStateFileMarker(command: string, stateFilePath: string): boolean {
+  const marker = `VSMUX_SESSION_STATE_FILE=${stateFilePath}`;
+  const markerIndex = command.indexOf(marker);
+  if (markerIndex < 0) {
+    return false;
+  }
+
+  const markerEndIndex = markerIndex + marker.length;
+  return markerEndIndex === command.length || /\s/.test(command[markerEndIndex] ?? "");
+}
+
+function isOpenCodeUtilityCommand(command: string): boolean {
+  return (
+    command.includes("session list") ||
+    command.includes("opencode mcp") ||
+    command.includes("opencode run") ||
+    command.includes("opencode serve") ||
+    command.includes("-- mcp") ||
+    command.includes("-- run") ||
+    command.includes("-- serve")
+  );
+}
+
+async function getUnixProcessGroupId(pid: number): Promise<number | undefined> {
+  if (process.platform === "win32") {
+    return undefined;
+  }
+
+  try {
+    const { stdout } = await execFileAsync("ps", ["-o", "pgid=", "-p", String(pid)]);
+    const processGroupId = Number.parseInt(stdout.trim(), 10);
+    return Number.isInteger(processGroupId) && processGroupId > 0 ? processGroupId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function terminateUnixProcessGroups(processGroupIds: readonly number[]): Promise<void> {
+  const uniqueProcessGroupIds = [
+    ...new Set(processGroupIds.filter((processGroupId) => processGroupId > 0)),
+  ];
+  for (const processGroupId of uniqueProcessGroupIds) {
+    signalUnixProcessGroup(processGroupId, "SIGTERM");
+  }
+
+  const deadline = Date.now() + PROCESS_TREE_TERMINATION_TIMEOUT_MS;
+  while (
+    uniqueProcessGroupIds.some((processGroupId) => isUnixProcessGroupAlive(processGroupId)) &&
+    Date.now() < deadline
+  ) {
+    await delay(100);
+  }
+
+  for (const processGroupId of uniqueProcessGroupIds) {
+    if (isUnixProcessGroupAlive(processGroupId)) {
+      signalUnixProcessGroup(processGroupId, "SIGKILL");
+    }
+  }
+}
+
+async function terminateProcessGroupFromArgs(args: readonly string[]): Promise<void> {
+  const processGroupId = Number.parseInt(args[1] ?? "", 10);
+  const ownerFilePath = args[2];
+  const ownerPid = Number.parseInt(args[3] ?? "", 10);
+  if (!Number.isInteger(processGroupId) || processGroupId <= 0) {
+    process.exitCode = 1;
+    return;
+  }
+
+  await terminateUnixProcessGroups([processGroupId]);
+  if (ownerFilePath && Number.isInteger(ownerPid) && ownerPid > 0) {
+    await releaseOpenCodeStateOwner({ ownerFilePath, pid: ownerPid });
+  }
+}
+
+/**
+ * CDXC:OpenCode-lifecycle 2026-08-04-17:01
+ * Explicit terminal teardown must clean the exact persisted session's OpenCode
+ * group even after the PTY has orphaned its wrapper. This command is invoked by
+ * the terminal daemon; it never selects another session's state-file marker.
+ */
+async function terminateOpenCodeStateFileFromArgs(args: readonly string[]): Promise<void> {
+  const stateFilePath = args[1]?.trim();
+  if (!stateFilePath || process.platform === "win32") {
+    return;
+  }
+
+  const processes = await listOpenCodeStateFileProcesses(stateFilePath);
+  if (!processes) {
+    throw new Error("VSmux: could not inspect OpenCode processes for terminal teardown.");
+  }
+
+  await terminateUnixProcessGroups(selectOpenCodeStateFileProcessGroups(processes, stateFilePath));
+  await unlink(`${stateFilePath}${OPEN_CODE_OWNER_FILE_SUFFIX}`).catch(() => undefined);
+}
+
+function signalUnixProcessGroup(processGroupId: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-processGroupId, signal);
+  } catch {
+    // The group may have exited while cleanup was being scheduled.
+  }
+}
+
+function isUnixProcessGroupAlive(processGroupId: number): boolean {
+  try {
+    process.kill(-processGroupId, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isFileExistsError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
+}
+
+function delay(durationMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, durationMs);
+  });
 }
 
 function serializeUnknownError(error: unknown): Record<string, unknown> {
@@ -623,7 +1041,14 @@ const isMainModule =
   normalizePath(process.argv[1]) === normalizePath(__filename);
 
 if (isMainModule) {
-  void main().catch((error) => {
+  const args = process.argv.slice(2);
+  const entrypoint =
+    args[0] === "--terminate-process-group"
+      ? terminateProcessGroupFromArgs(args)
+      : args[0] === "--terminate-opencode-state"
+        ? terminateOpenCodeStateFileFromArgs(args)
+        : main();
+  void entrypoint.catch((error) => {
     void appendAgentShellDebugLog("wrapper.launch.failed", serializeUnknownError(error));
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);

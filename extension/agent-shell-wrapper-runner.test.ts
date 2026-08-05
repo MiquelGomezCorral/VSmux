@@ -4,6 +4,10 @@ import {
   extractCodexSessionId,
   getCandidateExecutableNames,
   getProcessTreeKillTarget,
+  isInteractiveOpenCodeInvocation,
+  normalizeOpenCodeArguments,
+  parseUnixProcessList,
+  selectOpenCodeStateFileProcessGroups,
   shouldSpawnAgentInDetachedGroup,
 } from "./agent-shell-wrapper-runner";
 
@@ -44,6 +48,40 @@ describe("createAgentEnvironment", () => {
 
   test("should stamp the wrapper pid into the environment for descendant cleanup", () => {
     expect(createAgentEnvironment("codex", {}).VSMUX_WRAPPER_PID).toBe(String(process.pid));
+  });
+});
+
+describe("OpenCode lifecycle arguments", () => {
+  test("normalizes an empty session argument to a fresh launch", () => {
+    expect(normalizeOpenCodeArguments("opencode", ["-s", ""])).toEqual([]);
+  });
+
+  test("preserves a resolved OpenCode session id", () => {
+    expect(normalizeOpenCodeArguments("opencode", ["-s", "ses_123"])).toEqual(["-s", "ses_123"]);
+  });
+
+  test("does not classify session listing as an interactive launch", () => {
+    expect(isInteractiveOpenCodeInvocation(["session", "list", "--format", "json"])).toBe(false);
+    expect(isInteractiveOpenCodeInvocation([])).toBe(true);
+  });
+});
+
+describe("OpenCode state-file process groups", () => {
+  test("selects only interactive OpenCode groups for the exact state file", () => {
+    const stateFilePath = "/tmp/session-a.state";
+    const processes = parseUnixProcessList(
+      [
+        "100 1 100 VSMUX_SESSION_STATE_FILE=/tmp/session-a.state node agent-shell-wrapper-runner.js --agent opencode",
+        "101 100 100 VSMUX_SESSION_STATE_FILE=/tmp/session-a.state VSMUX_AGENT=opencode opencode -s ses_a",
+        "102 100 100 VSMUX_SESSION_STATE_FILE=/tmp/session-a.state VSMUX_AGENT=opencode codegraph",
+        "200 1 200 VSMUX_SESSION_STATE_FILE=/tmp/session-b.state VSMUX_AGENT=opencode opencode -s ses_b",
+        "300 1 300 VSMUX_SESSION_STATE_FILE=/tmp/session-a.state VSMUX_AGENT=opencode opencode session list --format json",
+        "400 1 400 VSMUX_SESSION_STATE_FILE=/tmp/session-a.state node agent-shell-wrapper-runner.js --agent opencode -- mcp auth local",
+        "500 1 500 VSMUX_SESSION_STATE_FILE=/tmp/session-a.state.backup VSMUX_AGENT=opencode opencode -s ses_backup",
+      ].join("\n"),
+    );
+
+    expect(selectOpenCodeStateFileProcessGroups(processes, stateFilePath)).toEqual([100]);
   });
 });
 
