@@ -364,7 +364,7 @@ export class DaemonTerminalWorkspaceBackend implements TerminalWorkspaceBackend 
     };
   }
 
-  public async focusSession(_sessionId: string): Promise<boolean> {
+  public async focusSession(_sessionId: string, _shouldFocus?: () => boolean): Promise<boolean> {
     return true;
   }
 

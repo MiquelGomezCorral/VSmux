@@ -279,6 +279,8 @@ import {
   TERMINAL_LETTER_SPACING_SETTING,
   TERMINAL_LINE_HEIGHT_SETTING,
   TERMINAL_SCROLL_TO_BOTTOM_WHEN_TYPING_SETTING,
+  getTerminalSurface,
+  getTerminalSurfaceConfigurationKey,
   WORKSPACE_ACTIVE_PANE_BORDER_COLOR_SETTING,
   WORKSPACE_PANE_GAP_SETTING,
   getAutoSleepTimeoutMs,
@@ -320,6 +322,9 @@ import {
   getXtermFrontendScrollback,
 } from "./settings";
 import { DaemonTerminalWorkspaceBackend } from "../daemon-terminal-workspace-backend";
+import { VscodeNativeTerminalWorkspaceBackend } from "../vscode-native-terminal-workspace-backend";
+import type { TerminalWorkspaceBackend } from "../terminal-workspace-backend";
+import { disposeManagedTerminalsForWorkspace } from "../native-managed-terminal";
 import { WorkspacePanelManager } from "../workspace-panel";
 import { WorkspaceAssetServer } from "../workspace-asset-server";
 import { appendWorkspacePanelBlankGrayReproLog } from "../workspace-panel-blank-gray-repro-log";
@@ -428,7 +433,7 @@ type SidebarCommandExitObserverOptions = {
 };
 
 export class NativeTerminalWorkspaceController implements vscode.Disposable {
-  private readonly backend: DaemonTerminalWorkspaceBackend;
+  private readonly backend: TerminalWorkspaceBackend;
   private readonly disposables: vscode.Disposable[] = [];
   private isDisposed = false;
   private hasApprovedUntrustedShells = vscode.workspace.isTrusted;
@@ -540,6 +545,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   private gitHudRefreshPromise: Promise<void> | undefined;
   private t3Runtime: T3RuntimeManager | undefined;
   private readonly workspaceId: string;
+  private readonly terminalSurface = getTerminalSurface();
   private readonly workspaceAssetServer: WorkspaceAssetServer;
   private readonly workspacePanel: WorkspacePanelManager;
   private suppressNonPersistentFreezeOnNextWorkspacePanelDispose = false;
@@ -559,12 +565,21 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     for (const [commandId, session] of this.sidebarCommandSessionByCommandId) {
       this.sidebarCommandCommandIdBySessionId.set(session.sessionId, commandId);
     }
-    this.backend = new DaemonTerminalWorkspaceBackend({
+    const backendOptions = {
       context,
-      ensureShellSpawnAllowed: async () => vscode.workspace.isTrusted,
+      /**
+       * CDXC:TerminalSecurity 2026-08-09-12:05
+       * Native and daemon shells use the same explicit approval flow before
+       * running commands in an untrusted workspace.
+       */
+      ensureShellSpawnAllowed: () => this.ensureShellSpawnAllowed(),
       workspaceId: this.workspaceId,
       workspaceRoot: getDefaultWorkspaceCwd(),
-    });
+    };
+    this.backend =
+      this.terminalSurface === "vscode-native"
+        ? new VscodeNativeTerminalWorkspaceBackend(backendOptions)
+        : new DaemonTerminalWorkspaceBackend(backendOptions);
     this.t3ActivityMonitor = new T3ActivityMonitor({
       getSnapshot: () => this.getOrCreateT3Runtime().fetchActivitySnapshot(),
       getWebSocketUrl: () => this.getOrCreateT3Runtime().createAuthenticatedWebSocketUrl(),
@@ -901,6 +916,18 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
         void this.handleBrowserTabsChanged("window.tabGroups.onDidChangeTabGroups");
       }),
     );
+    if (this.backend.onDidCloseSession) {
+      this.disposables.push(
+        this.backend.onDidCloseSession((sessionId) => {
+          void this.closeSession(sessionId, "workspace").catch((error) => {
+            logVSmuxDebug("controller.nativeTerminalCloseCleanup.failed", {
+              error: getErrorMessage(error),
+              sessionId,
+            });
+          });
+        }),
+      );
+    }
   }
 
   private async enableAlwaysOnT3BrowserAccess(): Promise<void> {
@@ -948,7 +975,14 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
         workspaceId: this.workspaceId,
       },
     );
-    await this.backend.initialize(this.getAllSessionRecords());
+    const sessionRecords = this.getAllSessionRecords();
+    const didDisposeOppositeNativeSurface = this.isNativeTerminalSurface()
+      ? false
+      : await disposeManagedTerminalsForWorkspace(vscode.window.terminals, this.workspaceId);
+    await this.backend.initialize(sessionRecords);
+    if (this.isNativeTerminalSurface() || didDisposeOppositeNativeSurface) {
+      await this.convergeTerminalSessions();
+    }
     await this.reconcileSidebarCommandSessions();
     this.restartAutoSleepTimer();
     await this.syncT3ActivityMonitor();
@@ -1016,7 +1050,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       return;
     }
 
-    await this.backend.freezeNonPersistentSessionsForPanelClose();
+    await this.backend.freezeNonPersistentSessionsForPanelClose?.();
     if (!this.hasCompletedInitialSidebarHydration) {
       return;
     }
@@ -1057,7 +1091,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       },
     );
     try {
-      await this.backend.releaseForDeactivation();
+      await this.backend.releaseForDeactivation?.();
       void appendTerminalRestartReproLog(
         getDefaultWorkspaceCwd(),
         "controller.releaseForDeactivation.complete",
@@ -1121,7 +1155,16 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     await this.revealSidebar();
     if (this.getAllSessionRecords().length === 0) {
       await this.createSession();
-      await this.workspacePanel.reveal();
+      await this.focusNativeActiveTerminal();
+      if (!this.isNativeTerminalSurface()) {
+        await this.workspacePanel.reveal();
+      }
+      return;
+    }
+
+    if (this.isNativeTerminalSurface() && this.store.getFocusedSession()?.kind === "terminal") {
+      await this.focusNativeActiveTerminal();
+      await this.refreshSidebar();
       return;
     }
 
@@ -1298,6 +1341,24 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
         sessionId,
         source,
       });
+    }
+    if (this.isNativeTerminalSurface() && sessionRecord.kind === "terminal") {
+      if (changed || shouldReattachDetachedTerminal) {
+        await this.afterStateChange();
+      }
+      await this.backend.focusSession(
+        sessionId,
+        () =>
+          focusRequestId === this.focusRequestSequence &&
+          this.store.getFocusedSession()?.sessionId === sessionId,
+      );
+      if (
+        terminalSurfaceEnsureResult === "created-terminal" &&
+        this.canResumeDetachedTerminalSession(sessionRecord)
+      ) {
+        await this.resumeDetachedTerminalSession(sessionRecord);
+      }
+      return;
     }
     const isVisiblePresentationFocus =
       this.isSessionVisibleInWorkspace(sessionId) && !shouldReattachDetachedTerminal;
@@ -3329,6 +3390,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     }
     if (changed) {
       await this.afterStateChange();
+      await this.focusNativeActiveTerminal();
       return;
     }
 
@@ -3338,6 +3400,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     if (focusPlan.shouldRevealWorkspacePanel) {
       await this.revealWorkspacePanelForSidebarFocus(source);
     }
+    await this.focusNativeActiveTerminal();
   }
 
   public async focusGroupByIndex(groupIndex: number): Promise<void> {
@@ -3555,7 +3618,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       await this.refreshSidebarFromCurrentState();
       this.logT3CloseSessionRepro("controller.afterStateChange.afterSidebarRefresh");
     }
-    if (!options?.workspaceAlreadyRefreshed) {
+    if (!options?.workspaceAlreadyRefreshed && this.shouldRenderWorkspacePanel()) {
       await this.refreshWorkspacePanel();
       this.logT3CloseSessionRepro("controller.afterStateChange.afterWorkspaceRefresh");
     }
@@ -3822,6 +3885,18 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   }
 
   private async handleConfigurationChange(event: vscode.ConfigurationChangeEvent): Promise<void> {
+    if (event.affectsConfiguration(getTerminalSurfaceConfigurationKey())) {
+      /**
+       * CDXC:TerminalMigration 2026-08-07-14:11
+       * Surface changes are cached at activation so live terminals are never
+       * migrated in place or mixed across the custom and native surfaces.
+       */
+      void vscode.window.showInformationMessage(
+        "VSmux terminal surface changes apply after reloading the window.",
+      );
+      return;
+    }
+
     if (
       !event.affectsConfiguration(SETTINGS_SECTION) &&
       !event.affectsConfiguration("terminal.integrated") &&
@@ -3831,7 +3906,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     }
 
     this.handleSoundSettingsChange(event);
-    await this.backend.syncConfiguration();
+    await this.backend.syncConfiguration?.();
     this.restartAutoSleepTimer();
     await this.runAutoSleepPass();
 
@@ -4843,11 +4918,13 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
         return;
       }
 
-      if (!this.workspacePanel.isVisible() && visibleSessions.length > 0) {
-        await this.refreshWorkspacePanel();
-        await this.workspacePanel.reveal();
-      } else {
-        await this.refreshWorkspacePanel();
+      if (this.shouldRenderWorkspacePanel()) {
+        if (!this.workspacePanel.isVisible() && visibleSessions.length > 0) {
+          await this.refreshWorkspacePanel();
+          await this.workspacePanel.reveal();
+        } else {
+          await this.refreshWorkspacePanel();
+        }
       }
       logVSmuxDebug("controller.reconcile.complete", {
         snapshot: this.describeActiveSnapshot(),
@@ -4901,7 +4978,10 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
         return "non-terminal";
       }
 
-      const createOrAttachResult = await this.backend.createOrAttachSession(sessionRecord, { cwd });
+      const createOrAttachResult = await this.backend.createOrAttachSession(sessionRecord, {
+        cwd,
+        groupId: this.store.getSessionGroup(sessionRecord.sessionId)?.groupId,
+      });
       if (
         !createOrAttachResult.didCreateTerminal &&
         this.backend.hasLiveTerminal(sessionRecord.sessionId)
@@ -5128,7 +5208,10 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     });
     if (sessionRecord) {
       this.clearReusedSessionCloseState(sessionRecord.sessionId);
-      await this.backend.createOrAttachSession(sessionRecord, { cwd });
+      await this.backend.createOrAttachSession(sessionRecord, {
+        cwd,
+        groupId: this.store.getSessionGroup(sessionRecord.sessionId)?.groupId,
+      });
     }
     return sessionRecord;
   }
@@ -5408,6 +5491,26 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
   private syncSurfaceManagers(): void {
     const sessions = this.getAllSessionRecords();
     this.backend.syncSessions(sessions);
+  }
+
+  private async convergeTerminalSessions(): Promise<void> {
+    for (const sessionRecord of this.getAllSessionRecords()) {
+      if (
+        sessionRecord.kind !== "terminal" ||
+        sessionRecord.isSleeping === true ||
+        this.isSessionClosing(sessionRecord.sessionId)
+      ) {
+        continue;
+      }
+
+      const surfaceEnsureResult = await this.createSurfaceIfNeeded(sessionRecord);
+      if (
+        surfaceEnsureResult === "created-terminal" &&
+        this.canResumeDetachedTerminalSession(sessionRecord)
+      ) {
+        await this.resumeDetachedTerminalSession(sessionRecord);
+      }
+    }
   }
 
   private getT3ActivityState(sessionRecord: SessionRecord): {
@@ -7232,7 +7335,7 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
     const resizeEligibleTerminalSessionIds = activeSnapshot.visibleSessionIds.filter(
       (sessionId) => this.store.getSession(sessionId)?.kind === "terminal",
     );
-    await this.backend.syncResizeEligibleSessions(resizeEligibleTerminalSessionIds);
+    await this.backend.syncResizeEligibleSessions?.(resizeEligibleTerminalSessionIds);
     const projectedWorkspacePaneSessions = getWorkspacePaneSessionRecords(workspaceSnapshot);
     const activeGroupSessionIdSet = new Set(
       activeSnapshot.sessions.map((session) => session.sessionId),
@@ -7262,6 +7365,10 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       await Promise.all(
         activeGroupSessions.map(async (sessionRecord) => {
           if (this.isSessionClosing(sessionRecord.sessionId)) {
+            return undefined;
+          }
+
+          if (this.isNativeTerminalSurface() && sessionRecord.kind === "terminal") {
             return undefined;
           }
 
@@ -7453,6 +7560,36 @@ export class NativeTerminalWorkspaceController implements vscode.Disposable {
       activePaneBorderColor: getWorkspaceActivePaneBorderColor(),
       paneGap: getWorkspacePaneGap(),
     };
+  }
+
+  private isNativeTerminalSurface(): boolean {
+    return this.terminalSurface === "vscode-native";
+  }
+
+  private shouldRenderWorkspacePanel(): boolean {
+    if (!this.isNativeTerminalSurface()) {
+      return true;
+    }
+
+    return this.getActiveSnapshot().visibleSessionIds.some((sessionId) => {
+      const sessionRecord = this.store.getSession(sessionId);
+      return sessionRecord?.kind !== "terminal";
+    });
+  }
+
+  private async focusNativeActiveTerminal(): Promise<void> {
+    if (!this.isNativeTerminalSurface()) {
+      return;
+    }
+
+    const focusedSession = this.store.getFocusedSession();
+    if (focusedSession?.kind === "terminal") {
+      const sessionId = focusedSession.sessionId;
+      await this.backend.focusSession(
+        sessionId,
+        () => this.store.getFocusedSession()?.sessionId === sessionId,
+      );
+    }
   }
 
   private isSessionVisibleInWorkspace(sessionId: string): boolean {

@@ -30,11 +30,13 @@ export function parseManagedTerminalIdentity(
 ): ManagedTerminalIdentity | undefined {
   const sessionId = readEnvironmentVariable(processCommandOutput, "VSMUX_SESSION_ID");
   const workspaceId = readEnvironmentVariable(processCommandOutput, "VSMUX_WORKSPACE_ID");
+  const groupId = readEnvironmentVariable(processCommandOutput, "VSMUX_GROUP_ID");
   if (!sessionId || !workspaceId) {
     return undefined;
   }
 
   return {
+    ...(groupId ? { groupId } : {}),
     sessionId,
     workspaceId,
   };

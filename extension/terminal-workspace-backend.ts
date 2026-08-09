@@ -5,6 +5,7 @@ import type {
   TerminalSessionSnapshot,
 } from "../shared/terminal-host-protocol";
 import type { PersistedSessionState } from "./session-state-file";
+import type { DaemonTerminalConnection, TerminalDaemonState } from "./daemon-terminal-runtime";
 
 export type TerminalCreateOrAttachResult = {
   didCreateTerminal: boolean;
@@ -13,6 +14,7 @@ export type TerminalCreateOrAttachResult = {
 
 export type TerminalCreateOrAttachOptions = {
   cwd?: string;
+  groupId?: string;
 };
 
 export type TerminalWorkspaceBackendTitleChange = {
@@ -36,6 +38,7 @@ export type TerminalWorkspaceBackend = vscode.Disposable & {
   readonly onDidChangeSessionActivity: vscode.Event<TerminalWorkspaceBackendActivityChange>;
   readonly onDidChangeSessionPresentation: vscode.Event<TerminalWorkspaceBackendPresentationChange>;
   readonly onDidChangeSessionTitle: vscode.Event<TerminalWorkspaceBackendTitleChange>;
+  readonly onDidCloseSession?: vscode.Event<string>;
   hasAttachedTerminal: (sessionId: string) => boolean;
   getLastTerminalActivityAt: (sessionId: string) => number | undefined;
   hasLiveTerminal: (sessionId: string) => boolean;
@@ -46,15 +49,25 @@ export type TerminalWorkspaceBackend = vscode.Disposable & {
     options?: TerminalCreateOrAttachOptions,
   ) => Promise<TerminalCreateOrAttachResult>;
   applyFirstPromptAutoRename: (sessionId: string, title: string) => Promise<void>;
-  focusSession: (sessionId: string) => Promise<boolean>;
+  cancelPendingFirstPromptAutoRename: (sessionId: string) => Promise<void>;
+  focusSession: (sessionId: string, shouldFocus?: () => boolean) => Promise<boolean>;
   getSessionSnapshot: (sessionId: string) => TerminalSessionSnapshot | undefined;
   killSession: (sessionId: string) => Promise<void>;
+  sleepSession: (sessionId: string) => Promise<void>;
+  deletePersistedSessionState: (sessionId: string) => Promise<void>;
+  freezeNonPersistentSessionsForPanelClose?: () => Promise<void>;
+  releaseForDeactivation?: () => Promise<void>;
+  getConnection: () => Promise<DaemonTerminalConnection>;
+  listGlobalSessions: () => Promise<TerminalDaemonState>;
+  killGlobalSession: (workspaceId: string, sessionId: string) => Promise<void>;
+  shutdownDaemon: () => Promise<boolean>;
+  markFirstPromptAutoRenameTriggered: (sessionId: string) => Promise<void>;
   persistLastTerminalActivityAt: (sessionId: string, activityAt: number) => Promise<void>;
   readPersistedSessionState: (sessionId: string) => Promise<PersistedSessionState>;
   renameSession: (sessionRecord: SessionRecord) => Promise<void>;
   restartSession: (sessionRecord: SessionRecord) => Promise<TerminalSessionSnapshot>;
-  syncResizeEligibleSessions: (sessionIds: readonly string[]) => Promise<void>;
+  syncResizeEligibleSessions?: (sessionIds: readonly string[]) => Promise<void>;
   syncSessions: (sessionRecords: readonly SessionRecord[]) => void;
-  syncConfiguration: () => Promise<void>;
+  syncConfiguration?: () => Promise<void>;
   writeText: (sessionId: string, data: string, shouldExecute?: boolean) => Promise<void>;
 };

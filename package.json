@@ -603,6 +603,20 @@
           ],
           "description": "Choose the default engine for new VSmux terminal sessions. xterm.js (recommended) is the default (slighty more stable). Ghostty is more performant but might have minor glitches occasionaly."
         },
+        "VSmux.terminalSurface": {
+          "title": "Terminal Surface",
+          "type": "string",
+          "default": "workspace",
+          "enum": [
+            "workspace",
+            "vscode-native"
+          ],
+          "enumItemLabels": [
+            "VSmux workspace (default)",
+            "Native VS Code terminals (pilot)"
+          ],
+          "description": "Choose whether VSmux terminals use the current VSmux workspace or native VS Code terminal tabs. Reload the window after changing this setting."
+        },
         "VSmux.xtermHeadlessScrollback": {
           "title": "xterm.js Reconnect Scrollback",
           "type": "number",

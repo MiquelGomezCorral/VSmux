@@ -63,6 +63,7 @@ export const TERMINAL_LINE_HEIGHT_SETTING = "terminalLineHeight";
 export const TERMINAL_LETTER_SPACING_SETTING = "terminalLetterSpacing";
 export const TERMINAL_CURSOR_STYLE_SETTING = "terminalCursorStyle";
 export const TERMINAL_ENGINE_SETTING = "terminalEngine";
+export const TERMINAL_SURFACE_SETTING = "terminalSurface";
 export const XTERM_HEADLESS_SCROLLBACK_SETTING = "xtermHeadlessScrollback";
 export const TERMINAL_SCROLL_TO_BOTTOM_WHEN_TYPING_SETTING = "terminalScrollToBottomWhenTyping";
 export const MIN_TERMINAL_FONT_SIZE = 8;
@@ -580,6 +581,19 @@ export function getDefaultTerminalEngine(): TerminalEngine {
       .getConfiguration(SETTINGS_SECTION)
       .get<string>(TERMINAL_ENGINE_SETTING, "xterm") ?? "xterm";
   return normalizeTerminalEngine(value);
+}
+
+export type TerminalSurface = "workspace" | "vscode-native";
+
+export function getTerminalSurfaceConfigurationKey(): string {
+  return `${SETTINGS_SECTION}.${TERMINAL_SURFACE_SETTING}`;
+}
+
+export function getTerminalSurface(): TerminalSurface {
+  const value = vscode.workspace
+    .getConfiguration(SETTINGS_SECTION)
+    .get<string>(TERMINAL_SURFACE_SETTING, "workspace");
+  return value === "vscode-native" ? "vscode-native" : "workspace";
 }
 
 export function getXtermHeadlessScrollback(): number {
